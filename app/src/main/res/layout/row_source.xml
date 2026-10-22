@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="8dp"
+    android:background="@drawable/bg_pane"
+    android:gravity="center_vertical"
+    android:minHeight="80dp"
+    android:orientation="horizontal"
+    android:paddingStart="20dp"
+    android:paddingEnd="12dp">
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/rName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text"
+            android:textSize="20sp" />
+
+        <TextView
+            android:id="@+id/rMeta"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text2"
+            android:textSize="15sp" />
+    </LinearLayout>
+
+    <TextView android:id="@+id/rDelete" style="@style/Chip" android:text="@string/delete" />
+    <TextView android:id="@+id/rEdit" style="@style/Chip" android:text="@string/edit" />
+    <TextView android:id="@+id/rRefresh" style="@style/Chip" android:text="@string/refresh" />
+    <TextView android:id="@+id/rSelect" style="@style/Chip" android:layout_marginEnd="0dp" android:text="@string/select" />
+</LinearLayout>

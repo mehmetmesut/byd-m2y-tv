@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/page"
+    android:clickable="true"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="32dp"
+        android:paddingTop="16dp"
+        android:paddingEnd="32dp"
+        android:paddingBottom="32dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/settings"
+                android:textColor="@color/text"
+                android:textSize="28sp" />
+
+            <TextView android:id="@+id/sClose" style="@style/Chip" android:layout_marginEnd="0dp" android:text="@string/close" />
+        </LinearLayout>
+
+        <TextView style="@style/Section" android:text="@string/s_playlists" />
+
+        <LinearLayout
+            android:id="@+id/sources"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="horizontal">
+
+            <TextView android:id="@+id/addM3u" style="@style/Chip" android:text="@string/add_m3u" />
+            <TextView android:id="@+id/addXtream" style="@style/Chip" android:text="@string/add_xtream" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/form"
+            android:layout_width="720dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_pane"
+            android:orientation="vertical"
+            android:padding="20dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/fTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/text"
+                android:textSize="21sp" />
+
+            <EditText android:id="@+id/fName" style="@style/Field" android:hint="@string/f_name" android:inputType="textCapSentences" />
+            <EditText android:id="@+id/fUrl" style="@style/Field" android:hint="@string/f_m3u" android:inputType="textUri" />
+            <EditText android:id="@+id/fUser" style="@style/Field" android:hint="@string/f_user" android:inputType="text" />
+            <EditText android:id="@+id/fPass" style="@style/Field" android:hint="@string/f_pass" android:inputType="textPassword" />
+            <EditText android:id="@+id/fEpg" style="@style/Field" android:hint="@string/f_epg" android:imeOptions="flagNoExtractUi|actionDone" android:inputType="textUri" />
+
+            <TextView
+                android:id="@+id/fError"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:textColor="@color/danger"
+                android:textSize="17sp"
+                android:visibility="gone" />
+
+            <!-- negative action left, primary right -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:orientation="horizontal">
+
+                <TextView android:id="@+id/fCancel" style="@style/Chip" android:text="@string/cancel" />
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <TextView android:id="@+id/fSave" style="@style/Primary" android:layout_marginEnd="0dp" android:text="@string/save" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <TextView style="@style/Section" android:text="@string/s_about" />
+
+        <TextView
+            android:id="@+id/about"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:lineSpacingExtra="4dp"
+            android:textColor="@color/text2"
+            android:textSize="17sp" />
+    </LinearLayout>
+</ScrollView>

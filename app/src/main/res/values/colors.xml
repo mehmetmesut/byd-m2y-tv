@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- M2Y night tokens (shared with M2Y EQ), dark only: video app in a car -->
+    <color name="page">#07080A</color>
+    <color name="pane">#0E1014</color>
+    <color name="card">#16191E</color>
+    <color name="card_hi">#22262D</color>
+    <color name="text">#D0D4D9</color>
+    <color name="text2">#969CA4</color>
+    <color name="accent">#0A84FF</color>
+    <color name="accent_dim">#173A63</color>
+    <color name="danger">#FF453A</color>
+    <color name="fav">#FFD60A</color>
+</resources>

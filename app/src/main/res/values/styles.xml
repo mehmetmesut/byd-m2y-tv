@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Tv" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/page</item>
+        <item name="android:colorBackground">@color/page</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:colorPrimary">@color/page</item>
+        <item name="android:statusBarColor">@color/page</item>
+        <item name="android:navigationBarColor">@color/page</item>
+        <item name="android:textColorPrimary">@color/text</item>
+        <item name="android:textColorSecondary">@color/text2</item>
+        <item name="android:textColorHint">@color/text2</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+
+    <!-- 56 dp touch targets for the car screen -->
+    <style name="Chip">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">56dp</item>
+        <item name="android:minWidth">96dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingStart">20dp</item>
+        <item name="android:paddingEnd">20dp</item>
+        <item name="android:layout_marginEnd">10dp</item>
+        <item name="android:textSize">19sp</item>
+        <item name="android:textColor">@color/text</item>
+        <item name="android:background">@drawable/bg_chip</item>
+        <item name="android:singleLine">true</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
+
+    <style name="Primary" parent="Chip">
+        <item name="android:background">@drawable/bg_primary</item>
+        <item name="android:textColor">#FFFFFF</item>
+    </style>
+
+    <style name="Field">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">56dp</item>
+        <item name="android:layout_marginTop">10dp</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">16dp</item>
+        <item name="android:background">@drawable/bg_field</item>
+        <item name="android:textSize">19sp</item>
+        <item name="android:textColor">@color/text</item>
+        <item name="android:singleLine">true</item>
+        <item name="android:imeOptions">flagNoExtractUi|actionNext</item>
+    </style>
+
+    <style name="Section">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">28dp</item>
+        <item name="android:layout_marginBottom">10dp</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:letterSpacing">0.08</item>
+        <item name="android:textColor">@color/text2</item>
+    </style>
+
+    <style name="Osd">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">64dp</item>
+        <item name="android:minWidth">88dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingStart">18dp</item>
+        <item name="android:paddingEnd">18dp</item>
+        <item name="android:layout_marginEnd">12dp</item>
+        <item name="android:textSize">21sp</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:background">@drawable/bg_osd</item>
+        <item name="android:singleLine">true</item>
+        <item name="android:clickable">true</item>
+    </style>
+</resources>

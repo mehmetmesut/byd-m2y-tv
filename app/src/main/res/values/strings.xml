@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">M2Y TV</string>
+    <string name="live">Canlı TV</string>
+    <string name="movies">Filmler</string>
+    <string name="series">Diziler</string>
+    <string name="search">Ara</string>
+    <string name="settings">Ayarlar</string>
+    <string name="all">Tümü</string>
+    <string name="favorites">Favoriler</string>
+    <string name="fav_add">☆ Favori</string>
+    <string name="fav_remove">★ Favoride</string>
+    <string name="fullscreen">Tam ekran</string>
+    <string name="play">Oynat</string>
+    <string name="close">Kapat</string>
+    <string name="prev">◀ Önceki</string>
+    <string name="next">Sonraki ▶</string>
+    <string name="pause">❚❚</string>
+    <string name="resume">▶</string>
+    <string name="exit_full">Küçült</string>
+    <string name="back_10">−10 sn</string>
+    <string name="fwd_30">+30 sn</string>
+    <string name="speed">Oynatma hızı</string>
+    <string name="empty_list">Bu bölümde içerik yok</string>
+    <string name="empty_fav">Favori yok. Eklemek için öğeye basılı tutun.</string>
+    <string name="empty_search">Sonuç bulunamadı</string>
+    <string name="loading">Yükleniyor…</string>
+    <string name="no_source">Oynatma listesi yok. Ayarlar\'dan M3U ya da Xtream ekleyin.</string>
+    <string name="connecting">Bağlanıyor…</string>
+    <string name="buffering">Arabelleğe alınıyor…</string>
+    <string name="tap_retry">Yeniden denemek için dokunun</string>
+
+    <string name="s_playlists">OYNATMA LİSTELERİ</string>
+    <string name="s_about">HAKKINDA</string>
+    <string name="add_m3u">+ M3U ekle</string>
+    <string name="add_xtream">+ Xtream ekle</string>
+    <string name="select">Seç</string>
+    <string name="selected">Seçili</string>
+    <string name="refresh">Yenile</string>
+    <string name="edit">Düzenle</string>
+    <string name="delete">Sil</string>
+    <string name="delete_confirm">Emin misiniz?</string>
+    <string name="cancel">Vazgeç</string>
+    <string name="save">Kaydet</string>
+    <string name="checking">Denetleniyor…</string>
+    <string name="f_name">Ad</string>
+    <string name="f_m3u">M3U adresi (http/https)</string>
+    <string name="f_server">Sunucu (http://adres:port)</string>
+    <string name="f_user">Kullanıcı adı</string>
+    <string name="f_pass">Şifre</string>
+    <string name="f_epg">EPG (XMLTV) adresi — isteğe bağlı</string>
+    <string name="form_m3u">M3U oynatma listesi</string>
+    <string name="form_xtream">Xtream Codes girişi</string>
+    <string name="about_text">M2Y TV %1$s\nYazar: Yeşil Dönüşüm Mühendisi - M2Y\nBYD DiLink 3.0 (Android 10, arm64) için IPTV oynatıcısı. Reklam, izleme ve Google hizmeti yok.\n\nAçık kaynak bileşenler (Apache-2.0): AndroidX Media3 ExoPlayer, AndroidX RecyclerView, OkHttp, Kotlin Coroutines.\nMimari yaklaşım için incelenen proje: Strix (isnow-git/strix, Apache-2.0); kod kopyalanmadı.</string>
+</resources>
