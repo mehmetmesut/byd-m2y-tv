@@ -13,14 +13,16 @@ import java.io.Closeable
  * WAL lets the UI read the published catalogue while an import writes the next generation.
  * Every call does disk I/O: use from an IO dispatcher only.
  */
-class Db(ctx: Context) : SQLiteOpenHelper(ctx, "tv.db", null, 1) {
+class Db(ctx: Context) : SQLiteOpenHelper(ctx, "tv.db", null, 2) {
     init {
         setWriteAheadLoggingEnabled(true)
     }
 
-    override fun onCreate(db: SQLiteDatabase) = SCHEMA.forEach(db::execSQL)
+    override fun onCreate(db: SQLiteDatabase) = (SCHEMA + SCHEMA_2).forEach(db::execSQL)
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) SCHEMA_2.forEach(db::execSQL)
+    }
 
     // ---- sources
 
@@ -57,9 +59,10 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "tv.db", null, 1) {
     }
 
     fun deleteSource(id: Long) = tx { db ->
-        for (t in listOf("item", "cat", "fav", "epg")) db.delete(t, "src=?", arrayOf("$id"))
+        db.delete("grp_item", "grp IN (SELECT id FROM grp WHERE src=?)", arrayOf("$id"))
+        for (t in listOf("item", "cat", "fav", "epg", "hidden", "recent", "health", "grp")) db.delete(t, "src=?", arrayOf("$id"))
         db.delete("source", "id=?", arrayOf("$id"))
-        db.delete("kv", "k LIKE ? ESCAPE '\\' OR k IN (?,?)", arrayOf("cat\\_${id}\\_%", "last_$id", "fmt_$id"))
+        db.delete("kv", "k LIKE ? ESCAPE '\\' OR k IN (?,?,?,?)", arrayOf("cat\\_${id}\\_%", "last_$id", "fmt_$id", "srv_$id", "conns_$id"))
     }
 
     // ---- import
@@ -188,32 +191,41 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "tv.db", null, 1) {
 
     // ---- catalogue
 
+    /** Provider categories that still have a place in the list (deleted packages left out). */
     fun cats(src: Source, kind: Kind): List<Cat> = readableDatabase.rawQuery(
-        "SELECT ext,name FROM cat WHERE src=? AND kind=? AND gen=? ORDER BY ord",
+        "SELECT ext,name FROM cat c WHERE src=? AND kind=? AND gen=? AND NOT EXISTS" +
+            "(SELECT 1 FROM hidden h WHERE h.src=c.src AND h.kind=c.kind AND h.cat=1 AND h.ext=c.ext) ORDER BY ord",
         arrayOf("${src.id}", "${kind.ordinal}", "${src.gen(kind)}"),
     ).use { c -> buildList { while (c.moveToNext()) add(Cat(c.getString(0), c.getString(1))) } }
 
-    /** One page of a category (or of everything when [cat] is null), keyset-paged on `ord`. */
-    fun items(src: Source, kind: Kind, cat: String?, afterOrd: Int, limit: Int): List<Item> {
-        val args = mutableListOf("${src.id}", "${kind.ordinal}", "${src.gen(kind)}")
-        if (cat != null) args += cat
-        args += "$afterOrd"
-        args += "$limit"
+    /**
+     * One page of the list behind a rail key: everything ([Cat.ALL]) or a provider category, keyset-paged on `ord`;
+     * favourites, recents and user groups come whole (only for [afterOrd] < 0). Deleted channels are left out.
+     */
+    fun items(src: Source, kind: Kind, key: String, afterOrd: Int, limit: Int): List<Item> {
+        val base = arrayOf("${src.id}", "${kind.ordinal}", "${src.gen(kind)}")
+        val group = Cat.groupId(key)
+        val (where, order, extra) = when {
+            key == Cat.ALL -> Triple(" AND ord>?", "ord LIMIT ?", arrayOf("$afterOrd", "$limit"))
+            key == Cat.FAV -> Triple(" AND EXISTS(SELECT 1 FROM fav f WHERE f.src=i.src AND f.kind=i.kind AND f.ext=i.ext)", "ord", emptyArray())
+            key == Cat.REC -> Triple("", "(SELECT at FROM recent r WHERE r.src=i.src AND r.kind=i.kind AND r.ext=i.ext) DESC", emptyArray())
+            group != null -> Triple("", "(SELECT at FROM grp_item g WHERE g.grp=$group AND g.ext=i.ext)", emptyArray())
+            else -> Triple(" AND cat=? AND ord>?", "ord LIMIT ?", arrayOf(key, "$afterOrd", "$limit"))
+        }
+        if (afterOrd >= 0 && extra.isEmpty()) return emptyList() // whole lists have no next page
+        val member = when {
+            key == Cat.REC -> " AND EXISTS(SELECT 1 FROM recent r WHERE r.src=i.src AND r.kind=i.kind AND r.ext=i.ext)"
+            group != null -> " AND EXISTS(SELECT 1 FROM grp_item g WHERE g.grp=$group AND g.ext=i.ext)"
+            else -> ""
+        }
         return readableDatabase.rawQuery(
-            "SELECT $COLS FROM item WHERE src=? AND kind=? AND gen=?" + (if (cat != null) " AND cat=?" else "") +
-                " AND ord>? ORDER BY ord LIMIT ?",
-            args.toTypedArray(),
+            "SELECT $COLS FROM item i WHERE src=? AND kind=? AND gen=?$member$where$VISIBLE ORDER BY $order",
+            base + extra,
         ).use { it.items() }
     }
 
-    fun favItems(src: Source, kind: Kind): List<Item> = readableDatabase.rawQuery(
-        "SELECT $COLS FROM item i WHERE src=? AND kind=? AND gen=? AND EXISTS" +
-            "(SELECT 1 FROM fav f WHERE f.src=i.src AND f.kind=i.kind AND f.ext=i.ext) ORDER BY ord",
-        arrayOf("${src.id}", "${kind.ordinal}", "${src.gen(kind)}"),
-    ).use { it.items() }
-
     fun search(src: Source, kind: Kind, query: String, limit: Int): List<Item> = readableDatabase.rawQuery(
-        "SELECT $COLS FROM item WHERE src=? AND kind=? AND gen=? AND q LIKE ? ESCAPE '\\' ORDER BY ord LIMIT ?",
+        "SELECT $COLS FROM item i WHERE src=? AND kind=? AND gen=? AND q LIKE ? ESCAPE '\\'$VISIBLE ORDER BY ord LIMIT ?",
         arrayOf("${src.id}", "${kind.ordinal}", "${src.gen(kind)}", likePattern(query), "$limit"),
     ).use { it.items() }
 
@@ -236,6 +248,75 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "tv.db", null, 1) {
             writableDatabase.delete("fav", "src=? AND kind=? AND ext=?", a)
         }
     }
+
+    fun clearFavs(src: Long, kind: Kind) = writableDatabase.delete("fav", "src=? AND kind=?", arrayOf("$src", "${kind.ordinal}"))
+
+    // ---- recently watched (newest first, capped)
+
+    fun addRecent(src: Long, kind: Kind, ext: String) = tx { db ->
+        val a = arrayOf("$src", "${kind.ordinal}")
+        db.execSQL("INSERT OR REPLACE INTO recent(src,kind,ext,at) VALUES(?,?,?,${System.currentTimeMillis()})", a + ext)
+        db.execSQL(
+            "DELETE FROM recent WHERE src=? AND kind=? AND ext NOT IN (SELECT ext FROM recent WHERE src=? AND kind=? ORDER BY at DESC LIMIT $RECENT_MAX)",
+            a + a,
+        )
+    }
+
+    fun clearRecent(src: Long, kind: Kind) = writableDatabase.delete("recent", "src=? AND kind=?", arrayOf("$src", "${kind.ordinal}"))
+
+    // ---- deleted channels and packages (kept out of every list until restored)
+
+    fun hide(src: Long, kind: Kind, exts: Collection<String>, isCat: Boolean) = tx { db ->
+        val st = db.compileStatement("INSERT OR IGNORE INTO hidden(src,kind,cat,ext) VALUES($src,${kind.ordinal},${if (isCat) 1 else 0},?)")
+        for (e in exts) {
+            st.bindString(1, e)
+            st.executeInsert()
+        }
+        st.close()
+    }
+
+    /** Brings every deleted channel and package of [src] back; returns how many entries were restored. */
+    fun unhideAll(src: Long): Int = writableDatabase.delete("hidden", "src=?", arrayOf("$src"))
+
+    // ---- user groups
+
+    fun groups(src: Long, kind: Kind): List<Group> = readableDatabase.rawQuery(
+        "SELECT id,name FROM grp WHERE src=? AND kind=? ORDER BY id",
+        arrayOf("$src", "${kind.ordinal}"),
+    ).use { c -> buildList { while (c.moveToNext()) add(Group(c.getLong(0), c.getString(1))) } }
+
+    fun addGroup(src: Long, kind: Kind, name: String): Long = writableDatabase.insertOrThrow(
+        "grp",
+        null,
+        ContentValues().apply {
+            put("src", src)
+            put("kind", kind.ordinal)
+            put("name", name)
+        },
+    )
+
+    fun deleteGroup(id: Long) = tx { db ->
+        db.delete("grp_item", "grp=?", arrayOf("$id"))
+        db.delete("grp", "id=?", arrayOf("$id"))
+    }
+
+    fun setInGroup(group: Long, ext: String, on: Boolean) {
+        if (on) {
+            writableDatabase.execSQL("INSERT OR IGNORE INTO grp_item(grp,ext,at) VALUES(?,?,${System.currentTimeMillis()})", arrayOf("$group", ext))
+        } else {
+            writableDatabase.delete("grp_item", "grp=? AND ext=?", arrayOf("$group", ext))
+        }
+    }
+
+    // ---- channel health: last real result per channel (true = picture came, false = failed for good)
+
+    fun health(src: Long): HashMap<String, Boolean> = readableDatabase.rawQuery(
+        "SELECT ext,ok FROM health WHERE src=?",
+        arrayOf("$src"),
+    ).use { c -> HashMap<String, Boolean>().also { while (c.moveToNext()) it[c.getString(0)] = c.getInt(1) == 1 } }
+
+    fun setHealth(src: Long, ext: String, ok: Boolean) =
+        writableDatabase.execSQL("INSERT OR REPLACE INTO health(src,ext,ok) VALUES(?,?,${if (ok) 1 else 0})", arrayOf("$src", ext))
 
     // ---- EPG (XMLTV, M3U sources)
 
@@ -305,6 +386,22 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "tv.db", null, 1) {
         const val ITEM_INSERT = "INSERT INTO item(src,kind,gen,cat,ext,name,q,logo,cext,epg,num,ord,rating,opts) VALUES"
         const val ITEM_ROW = "(?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         const val COLS = "id,kind,cat,ext,name,logo,cext,epg,num,ord,rating,opts"
+        const val RECENT_MAX = 30
+
+        // a deleted channel, or one whose package was deleted; two primary-key lookups per row ("item i" alias)
+        const val VISIBLE = " AND NOT EXISTS(SELECT 1 FROM hidden h WHERE h.src=i.src AND h.kind=i.kind AND h.cat=0 AND h.ext=i.ext)" +
+            " AND (i.cat IS NULL OR NOT EXISTS(SELECT 1 FROM hidden h WHERE h.src=i.src AND h.kind=i.kind AND h.cat=1 AND h.ext=i.cat))"
+
+        // version 2: list management carried over from the webOS app
+        val SCHEMA_2 = listOf(
+            "CREATE TABLE hidden(src INTEGER NOT NULL, kind INTEGER NOT NULL, cat INTEGER NOT NULL, ext TEXT NOT NULL, " +
+                "PRIMARY KEY(src,kind,cat,ext)) WITHOUT ROWID",
+            "CREATE TABLE recent(src INTEGER NOT NULL, kind INTEGER NOT NULL, ext TEXT NOT NULL, at INTEGER NOT NULL, " +
+                "PRIMARY KEY(src,kind,ext)) WITHOUT ROWID",
+            "CREATE TABLE health(src INTEGER NOT NULL, ext TEXT NOT NULL, ok INTEGER NOT NULL, PRIMARY KEY(src,ext)) WITHOUT ROWID",
+            "CREATE TABLE grp(id INTEGER PRIMARY KEY AUTOINCREMENT, src INTEGER NOT NULL, kind INTEGER NOT NULL, name TEXT NOT NULL)",
+            "CREATE TABLE grp_item(grp INTEGER NOT NULL, ext TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(grp,ext)) WITHOUT ROWID",
+        )
 
         val SCHEMA = listOf(
             // AUTOINCREMENT: a deleted source's id (and any rows an interrupted import left behind) is never reused

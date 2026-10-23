@@ -16,7 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 /** One line of the category rail or of the side list (EPG, episodes). */
 class Row(val text: CharSequence, val header: Boolean = false, val active: Boolean = false, val tag: Any? = null)
 
-class TextAdapter(private val onClick: (Row) -> Unit) : RecyclerView.Adapter<TextAdapter.H>() {
+class TextAdapter(private val onClick: (Row) -> Unit, private val onLongClick: ((Row) -> Unit)? = null) : RecyclerView.Adapter<TextAdapter.H>() {
     var rows: List<Row> = emptyList()
         private set
 
@@ -44,6 +44,13 @@ class TextAdapter(private val onClick: (Row) -> Unit) : RecyclerView.Adapter<Tex
             val p = h.bindingAdapterPosition
             if (p != RecyclerView.NO_POSITION && !rows[p].header) onClick(rows[p])
         }
+        onLongClick?.let { long ->
+            h.t.setOnLongClickListener {
+                val p = h.bindingAdapterPosition
+                if (p != RecyclerView.NO_POSITION && !rows[p].header) long(rows[p])
+                p != RecyclerView.NO_POSITION
+            }
+        }
         return h
     }
 
@@ -69,6 +76,8 @@ class ItemAdapter(
     private val onClick: (Item) -> Unit,
     private val onLongClick: (Item) -> Unit,
     private val onNearEnd: () -> Unit,
+    /** Health light of a live channel: true green, false red, null none. */
+    private val light: (String) -> Boolean?,
 ) : RecyclerView.Adapter<ItemAdapter.H>() {
     val items = ArrayList<Item>()
     private var favs: Set<String> = emptySet()
@@ -76,6 +85,7 @@ class ItemAdapter(
     private var kind = Kind.LIVE
 
     class H(v: View) : RecyclerView.ViewHolder(v) {
+        val light: TextView = v.findViewById(R.id.light)
         val num: TextView = v.findViewById(R.id.num)
         val logo: ImageView = v.findViewById(R.id.logo)
         val name: TextView = v.findViewById(R.id.name)
@@ -112,6 +122,9 @@ class ItemAdapter(
 
     fun indexOf(ext: String?) = items.indexOfFirst { it.ext == ext }
 
+    /** Redraws the row of [ext] (its light changed). */
+    fun changed(ext: String) = notifyMatching(ext)
+
     private fun notifyMatching(ext: String) = items.forEachIndexed { i, it -> if (it.ext == ext) notifyItemChanged(i) }
 
     override fun getItemCount() = items.size
@@ -140,6 +153,9 @@ class ItemAdapter(
                 h.logo.scaleType = if (live) ImageView.ScaleType.FIT_CENTER else ImageView.ScaleType.CENTER_CROP
             }
         }
+        val lit = if (live) light(it.ext) else null
+        h.light.visibility = if (lit == null) View.INVISIBLE else View.VISIBLE
+        if (lit != null) h.light.setTextColor(h.itemView.context.getColor(if (lit) R.color.ok else R.color.danger))
         h.num.visibility = if (live && it.num > 0) View.VISIBLE else View.GONE
         h.num.text = it.num.toString()
         h.name.text = it.name

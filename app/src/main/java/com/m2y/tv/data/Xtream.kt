@@ -20,7 +20,13 @@ class XtreamStream(
     val rating: String?,
 )
 
-class Account(val ok: Boolean, val status: String?, val expiry: Long?, val formats: List<String>)
+/** [conns]: streams the account may open at once (`max_connections`); 0 when the panel does not say. */
+class Account(val ok: Boolean, val status: String?, val expiry: Long?, val formats: List<String>, val conns: Int)
+
+private val LIVE_FORMATS = listOf("ts", "m3u8")
+
+/** Allowed live outputs in preference order; a panel that lists none (or only others) gets both tried. */
+fun liveFormats(allowed: List<String>): List<String> = LIVE_FORMATS.filter { it in allowed }.ifEmpty { LIVE_FORMATS }
 
 class VodInfo(val plot: String?, val genre: String?, val year: String?, val duration: String?)
 
@@ -31,49 +37,59 @@ class SeriesInfo(val plot: String?, val episodes: List<Episode>)
  * socket: a provider's VOD list can be tens of MB and is never materialised as a String or object list.
  * All calls block; run them on an IO dispatcher.
  */
-class Xtream(private val http: OkHttpClient, private val creds: Creds.Xtream) {
-    val base = normalizeServer(creds.server)
-    /** Live output extension; "ts" unless the account only allows HLS. */
-    var liveExt = "ts"
+class Xtream(private val http: OkHttpClient, private val creds: Creds.Xtream, val server: String = creds.server) {
+    val base = normalizeServer(server)
+
+    /** Live outputs to try, preferred first: "ts" (ExoPlayer plays it natively), then "m3u8", as the account allows. */
+    var formats = LIVE_FORMATS
 
     private fun api(action: String? = null, extra: String = "") =
         "$base/player_api.php?username=${enc(creds.user)}&password=${enc(creds.pass)}" +
             (action?.let { "&action=$it" } ?: "") + extra
 
-    fun streamUrl(kind: Kind, id: String, cext: String?): String {
+    /**
+     * Addresses to try for one stream: every server in [servers] order × every allowed live output. A VOD file has
+     * one container, so only the servers vary.
+     */
+    fun streamUrls(kind: Kind, id: String, cext: String?, servers: List<String>): List<String> {
         val dir = when (kind) {
             Kind.LIVE -> "live"
             Kind.MOVIE -> "movie"
             Kind.SERIES -> "series"
         }
-        val ext = if (kind == Kind.LIVE) liveExt else cext ?: "mp4"
-        return "$base/$dir/${creds.user}/${creds.pass}/$id.$ext"
+        val exts = if (kind == Kind.LIVE) formats else listOf(cext ?: "mp4")
+        return servers.flatMap { s -> exts.map { "${normalizeServer(s)}/$dir/${creds.user}/${creds.pass}/$id.$it" } }
     }
 
+    /** The panel's full XMLTV guide; used when it refuses `get_short_epg`. */
+    fun xmltvUrl() = "$base/xmltv.php?username=${enc(creds.user)}&password=${enc(creds.pass)}"
+
     fun account(): Account = read(api()) { r ->
-        var acc = Account(false, null, null, emptyList())
+        var acc = Account(false, null, null, emptyList(), 0)
         r.obj { key ->
             if (key == "user_info") acc = readAccount(r) else r.skipValue()
         }
-        acc.also { if (it.ok && "ts" !in it.formats && "m3u8" in it.formats) liveExt = "m3u8" }
+        acc.also { if (it.ok) formats = liveFormats(it.formats) }
     }
 
     private fun readAccount(r: JsonReader): Account {
-        if (r.peek() != JsonToken.BEGIN_OBJECT) return Account(false, null, null, emptyList()).also { r.skipValue() }
+        if (r.peek() != JsonToken.BEGIN_OBJECT) return Account(false, null, null, emptyList(), 0).also { r.skipValue() }
         var auth = false
         var status: String? = null
         var exp: Long? = null
+        var conns = 0
         val formats = ArrayList<String>()
         r.obj { k ->
             when (k) {
                 "auth" -> auth = r.str() == "1"
                 "status" -> status = r.str()
                 "exp_date" -> exp = r.str()?.toLongOrNull()
+                "max_connections" -> conns = r.str()?.toIntOrNull() ?: 0
                 "allowed_output_formats" -> if (r.peek() == JsonToken.BEGIN_ARRAY) r.arr { r.str()?.let(formats::add) } else r.skipValue()
                 else -> r.skipValue()
             }
         }
-        return Account(auth, status, exp, formats)
+        return Account(auth, status, exp, formats, conns)
     }
 
     fun categories(kind: Kind, onCat: (id: String, name: String) -> Unit) = read(api(action(kind, "categories"))) { r ->

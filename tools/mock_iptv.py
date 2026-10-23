@@ -23,6 +23,8 @@ HOST = "http://10.0.2.2:8765"
 USERS = {"u": "p", "big": "p"}
 BIG = {"live": 20000, "vod": 60000, "series": 5000, "cats": 50}
 LIVE_SECONDS = 180
+# --no-short-epg: drop get_short_epg without an answer, like the user's panel (the app must fall back to xmltv.php)
+NO_SHORT_EPG = "--no-short-epg" in sys.argv
 
 
 def b64(s):
@@ -139,6 +141,9 @@ class H(BaseHTTPRequestHandler):
         if a == "get_vod_info":
             return self.send_json({"info": {"plot": "Deneme filminin konusu.", "genre": "Aksiyon", "releasedate": "2024-05-01",
                                             "duration": "00:02:00"}, "movie_data": {}})
+        if a == "get_short_epg" and NO_SHORT_EPG:
+            self.close_connection = True
+            return None
         if a == "get_short_epg":
             lim = int(q.get("limit", "4"))
             return self.send_json({"epg_listings": [{"title": b64(t), "description": b64(f"{t} açıklaması"),

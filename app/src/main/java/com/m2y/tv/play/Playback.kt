@@ -12,8 +12,10 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -29,8 +31,8 @@ import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
-/** What to play; [ua]/[referer] come from M3U #EXTVLCOPT lines. */
-class Media(val url: String, val live: Boolean, val ua: String? = null, val referer: String? = null)
+/** What to play: [urls] are tried in order (output formats, HLS twin, alternative server); [ua]/[referer] come from M3U #EXTVLCOPT lines. */
+class Media(val urls: List<String>, val live: Boolean, val ua: String? = null, val referer: String? = null)
 
 /** Film/episode speeds in tap order, starting from normal. */
 private val SPEEDS = floatArrayOf(1f, 1.25f, 1.5f, 0.5f, 0.75f)
@@ -40,17 +42,37 @@ fun nextSpeed(current: Float): Float = SPEEDS[(SPEEDS.indexOfFirst { it == curre
 /** "1x", "1,25x", "0,5x" (Turkish decimal comma). */
 fun speedLabel(s: Float): String = (if (s % 1f == 0f) s.toInt().toString() else s.toString().replace('.', ',')) + "x"
 
+/** The head unit's screen height: nothing above it is worth decoding, "automatic" included. */
+const val MAX_HEIGHT = 1080
+
+/** Height cap actually applied for a chosen maximum (0 = automatic). */
+fun videoCap(maxHeight: Int) = if (maxHeight in 1 until MAX_HEIGHT) maxHeight else MAX_HEIGHT
+
+/** Selectable heights of a stream: distinct, at most [MAX_HEIGHT], highest first. Fewer than two = single quality. */
+fun qualityChoices(heights: Collection<Int>): List<Int> = heights.filter { it in 1..MAX_HEIGHT }.distinct().sortedDescending()
+
+fun qualityLabel(maxHeight: Int) = if (maxHeight <= 0) "Otomatik" else "${maxHeight}p"
+
 /**
  * The app's only ExoPlayer (one hardware decoder at a time). A channel switch reuses it; every request bumps a
  * generation so a retry or timeout armed for a channel the user already left can never touch the current one.
  * Main thread only.
  */
 @OptIn(UnstableApi::class)
-class Playback(private val ctx: Context, http: OkHttpClient, private val ui: Listener) {
+class Playback(
+    private val ctx: Context,
+    http: OkHttpClient,
+    private val ui: Listener,
+    /** Wraps the network source for films and episodes (downloads first, then the watch cache); never used for live. */
+    private val vodCache: (DataSource.Factory) -> DataSource.Factory,
+) {
     interface Listener {
         fun onStatus(status: Status, detail: String?)
         fun onVideoSize(width: Int, height: Int, pixelRatio: Float)
         fun onFirstFrame(ms: Long)
+
+        /** Heights the current stream offers (see [qualityChoices]); empty or one = single quality. */
+        fun onQualities(choices: List<Int>)
     }
 
     enum class Status { IDLE, CONNECTING, PLAYING, BUFFERING, PAUSED, ENDED, FAILED }
@@ -63,12 +85,16 @@ class Playback(private val ctx: Context, http: OkHttpClient, private val ui: Lis
     private val loadErrors = DefaultLoadErrorHandlingPolicy(LOAD_RETRIES)
     private val hls = HlsMediaSource.Factory(dataSource).setLoadErrorHandlingPolicy(loadErrors)
     private val progressive = ProgressiveMediaSource.Factory(dataSource).setLoadErrorHandlingPolicy(loadErrors)
+    private val vodSource by lazy { vodCache(dataSource) } // opens the caches on the first film, not at app start
+    private val vodHls by lazy { HlsMediaSource.Factory(vodSource).setLoadErrorHandlingPolicy(loadErrors) }
+    private val vodProgressive by lazy { ProgressiveMediaSource.Factory(vodSource).setLoadErrorHandlingPolicy(loadErrors) }
     private val handler = Handler(Looper.getMainLooper())
     private var player: ExoPlayer? = null
+    private var builtLive = true // the player's buffer sizes follow the kind of stream it was built for
     private var surface: SurfaceView? = null
     private var gen = 0
-    private var attempt = 0
-    private var connectingSince = 0L // start of the current (re)connection effort; 0 while playing fine
+    private var cand = 0 // index of the address being tried in media.urls
+    private var retried = false // the one reconnect after a drop was used
     private var asHls = false
     private var startedAt = 0L
     private var resumeAt = 0L // VOD position to reopen at after release/retry
@@ -83,6 +109,10 @@ class Playback(private val ctx: Context, http: OkHttpClient, private val ui: Lis
     var speed = 1f
         private set
 
+    /** Highest video height the user allows (0 = automatic, still capped at [MAX_HEIGHT]); kept for every stream. */
+    var maxHeight = 0
+        private set
+
     val positionMs get() = player?.currentPosition ?: 0
     val durationMs get() = player?.duration?.takeIf { it != C.TIME_UNSET } ?: 0
 
@@ -93,11 +123,9 @@ class Playback(private val ctx: Context, http: OkHttpClient, private val ui: Lis
 
     fun play(m: Media) {
         media = m
-        attempt = 0
         resumeAt = 0
         resumePaused = false
         speed = 1f
-        asHls = m.url.substringBefore('?').endsWith(".m3u8", true)
         open()
     }
 
@@ -106,15 +134,23 @@ class Playback(private val ctx: Context, http: OkHttpClient, private val ui: Lis
         if (media != null && player == null) open()
     }
 
-    /** Network is back or the user tapped the error: try the current stream again. */
+    /** Network is back or the user tapped the error: try the current stream again (a waiting film at once). */
     fun retryIfFailed() {
-        if (status == Status.FAILED) open()
+        if (status == Status.FAILED || (waiting && status == Status.CONNECTING)) open()
     }
 
+    /** A film or episode lost the network and waits for it; its position is kept. */
+    private val waiting get() = media?.live == false && retried
+
     private fun open() {
-        attempt = 0
-        connectingSince = SystemClock.elapsedRealtime()
+        retried = false
+        candidate(0)
         start()
+    }
+
+    private fun candidate(i: Int) {
+        cand = i
+        asHls = media?.urls?.getOrNull(i)?.substringBefore('?')?.endsWith(".m3u8", true) == true
     }
 
     fun togglePause() {
@@ -138,6 +174,17 @@ class Playback(private val ctx: Context, http: OkHttpClient, private val ui: Lis
         speed = nextSpeed(speed)
         player?.setPlaybackSpeed(speed)
         return speed
+    }
+
+    /** Caps the video track (adaptive streams switch at the next segment, no reload); applies to later streams too. */
+    fun setMaxHeight(h: Int) {
+        maxHeight = h
+        player?.let(::applyQuality)
+    }
+
+    private fun applyQuality(p: ExoPlayer) {
+        // too-high only variants still play: the selector exceeds the cap when nothing fits under it
+        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon().setMaxVideoSize(Int.MAX_VALUE, videoCap(maxHeight)).build()
     }
 
     /** Releases the decoder and buffers; [media] and the VOD position are kept for [resume]. */
@@ -165,7 +212,14 @@ class Playback(private val ctx: Context, http: OkHttpClient, private val ui: Lis
 
     private fun start() {
         val m = media ?: return
-        val p = player ?: build().also { player = it }
+        if (player != null && builtLive != m.live) {
+            player?.release() // live and film buffers differ; a new stream reinitialises the decoder anyway
+            player = null
+        }
+        val p = player ?: build(m.live).also {
+            player = it
+            builtLive = m.live
+        }
         val g = ++gen
         handler.removeCallbacksAndMessages(null)
         dataSource.setDefaultRequestProperties(
@@ -174,8 +228,13 @@ class Playback(private val ctx: Context, http: OkHttpClient, private val ui: Lis
                 m.referer?.takeIf { it.isNotBlank() }?.let { put("Referer", it) }
             },
         )
-        val item = MediaItem.Builder().setUri(m.url).apply { if (asHls) setMimeType(MimeTypes.APPLICATION_M3U8) }.build()
-        val source = if (asHls) hls.createMediaSource(item) else progressive.createMediaSource(item)
+        val item = MediaItem.Builder().setUri(m.urls[cand]).apply { if (asHls) setMimeType(MimeTypes.APPLICATION_M3U8) }.build()
+        val source = when {
+            m.live && asHls -> hls.createMediaSource(item)
+            m.live -> progressive.createMediaSource(item)
+            asHls -> vodHls.createMediaSource(item)
+            else -> vodProgressive.createMediaSource(item)
+        }
         if (resumeAt > 0) p.setMediaSource(source, resumeAt) else p.setMediaSource(source)
         p.playWhenReady = !resumePaused
         p.setPlaybackSpeed(speed) // also restores it after release/retry
@@ -183,11 +242,11 @@ class Playback(private val ctx: Context, http: OkHttpClient, private val ui: Lis
         resumeAt = 0
         resumePaused = false
         startedAt = SystemClock.elapsedRealtime()
-        set(Status.CONNECTING, if (attempt > 0) "Yeniden bağlanılıyor…" else null)
-        handler.postDelayed({ if (g == gen && status == Status.CONNECTING) retry(g, "Yayın yanıt vermiyor") }, START_TIMEOUT_MS)
+        set(Status.CONNECTING, if (waiting) WAIT_TEXT else if (retried) "Bağlantı koptu, yeniden bağlanılıyor…" else null)
+        handler.postDelayed({ if (g == gen && status == Status.CONNECTING) failed(g, "Yayın yanıt vermiyor", false) }, START_TIMEOUT_MS)
     }
 
-    private fun build(): ExoPlayer {
+    private fun build(live: Boolean): ExoPlayer {
         // video + audio only: no text, metadata or image renderers decoding data nobody shows
         val renderers = RenderersFactory { h, video, audio, _, _ ->
             arrayOf(
@@ -202,10 +261,11 @@ class Playback(private val ctx: Context, http: OkHttpClient, private val ui: Lis
                 MediaCodecAudioRenderer(ctx, MediaCodecSelector.DEFAULT, true, h, audio, DefaultAudioSink.Builder(ctx).build()),
             )
         }
+        // films read further ahead so a tunnel or a dead zone is bridged; live stays short for fast zaps
         val load = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(MIN_BUFFER_MS, MAX_BUFFER_MS, START_BUFFER_MS, REBUFFER_MS)
-            // byte cap wins over time: VOD buffers live in the Java heap (256 MB limit on the head unit)
-            .setTargetBufferBytes(BUFFER_BYTES)
+            .setBufferDurationsMs(if (live) MIN_BUFFER_MS else VOD_MIN_BUFFER_MS, if (live) MAX_BUFFER_MS else VOD_MAX_BUFFER_MS, START_BUFFER_MS, REBUFFER_MS)
+            // byte cap wins over time: buffers live in the Java heap (256 MB limit on the head unit)
+            .setTargetBufferBytes(if (live) BUFFER_BYTES else VOD_BUFFER_BYTES)
             .setPrioritizeTimeOverSizeThresholds(false)
             .build()
         return ExoPlayer.Builder(ctx, renderers)
@@ -215,21 +275,30 @@ class Playback(private val ctx: Context, http: OkHttpClient, private val ui: Lis
             .apply {
                 addListener(events)
                 surface?.let(::setVideoSurfaceView)
+                applyQuality(this)
             }
     }
 
     private val events = object : Player.Listener {
+        override fun onTracksChanged(tracks: Tracks) {
+            val heights = ArrayList<Int>()
+            for (g in tracks.groups) {
+                if (g.type != C.TRACK_TYPE_VIDEO) continue
+                for (i in 0 until g.length) if (g.isTrackSupported(i)) heights += g.getTrackFormat(i).height
+            }
+            ui.onQualities(qualityChoices(heights))
+        }
+
         override fun onPlaybackStateChanged(state: Int) {
             val p = player ?: return
             when (state) {
                 Player.STATE_READY -> {
-                    attempt = 0
-                    connectingSince = 0
+                    retried = false // the picture is back: the next drop gets its own reconnect
                     set(if (p.playWhenReady) Status.PLAYING else Status.PAUSED)
                 }
                 Player.STATE_BUFFERING -> if (status != Status.CONNECTING) set(Status.BUFFERING)
                 // a live feed that "ends" is a dropped connection
-                Player.STATE_ENDED -> if (media?.live == true) retry(gen, "Yayın kesildi") else set(Status.ENDED)
+                Player.STATE_ENDED -> if (media?.live == true) failed(gen, "Yayın kesildi", false) else set(Status.ENDED)
             }
         }
 
@@ -253,22 +322,35 @@ class Playback(private val ctx: Context, http: OkHttpClient, private val ui: Lis
                     asHls = true
                     start()
                 }
-                error.errorCode in PERMANENT -> fail(message(error))
-                else -> retry(gen, message(error))
+                else -> failed(gen, message(error), error.errorCode in PERMANENT)
             }
         }
     }
 
-    private fun retry(g: Int, reason: String) {
+    /**
+     * The next address is tried at once; when none is left, a dropped stream waits [RETRY_MS] (a short network
+     * wobble, or a single-connection account still counting the old stream) and reconnects once from the first
+     * address. A second drop, or an error retrying cannot fix, is reported.
+     */
+    private fun failed(g: Int, reason: String, permanent: Boolean) {
         if (g != gen) return
-        val now = SystemClock.elapsedRealtime()
-        if (connectingSince == 0L) connectingSince = now
-        // bounded in time as well as count: a server that silently drops connects must not keep the user waiting
-        if (attempt >= MAX_RETRIES || now - connectingSince > GIVE_UP_MS) return fail(reason)
-        attempt++
+        val m = media ?: return
         player?.let(::remember)
-        set(Status.CONNECTING, "Yeniden bağlanılıyor…")
-        handler.postDelayed({ if (g == gen) start() }, RETRY_BASE_MS shl (attempt - 1))
+        if (cand + 1 < m.urls.size) {
+            candidate(cand + 1)
+            start()
+            return
+        }
+        // live: one reconnect; a film keeps waiting for the network (every WAIT_RETRY_MS while the app is in front)
+        if (permanent || (retried && m.live)) return fail(reason)
+        val delay = if (retried) WAIT_RETRY_MS else RETRY_MS
+        retried = true
+        candidate(0)
+        val next = ++gen
+        handler.removeCallbacksAndMessages(null)
+        player?.stop() // frees the account's connection while waiting
+        set(Status.CONNECTING, if (m.live) "Bağlantı koptu, yeniden bağlanılıyor…" else WAIT_TEXT)
+        handler.postDelayed({ if (next == gen) start() }, delay)
     }
 
     private fun fail(reason: String) {
@@ -303,9 +385,12 @@ class Playback(private val ctx: Context, http: OkHttpClient, private val ui: Lis
         const val JOIN_MS = 5_000L
         const val MAX_DROPPED = 50
         const val START_TIMEOUT_MS = 12_000L
-        const val GIVE_UP_MS = 20_000L
-        const val MAX_RETRIES = 3
-        const val RETRY_BASE_MS = 1_000L
+        const val RETRY_MS = 3_000L
+        const val WAIT_RETRY_MS = 10_000L
+        const val WAIT_TEXT = "İnternet bekleniyor; gelince kaldığı yerden sürecek…"
+        const val VOD_MIN_BUFFER_MS = 60_000
+        const val VOD_MAX_BUFFER_MS = 120_000
+        const val VOD_BUFFER_BYTES = 80 shl 20 // ~110 s of a 6 Mbit/s film; the heap limit is 256 MB
         const val LOAD_RETRIES = 2
 
         // retrying cannot fix these

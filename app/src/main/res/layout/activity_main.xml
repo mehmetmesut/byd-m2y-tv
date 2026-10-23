@@ -43,6 +43,7 @@
                 android:textColor="@color/text2"
                 android:textSize="16sp" />
 
+            <TextView android:id="@+id/about" style="@style/Chip" android:minWidth="56dp" android:contentDescription="@string/about_title" android:text="@string/about" />
             <TextView android:id="@+id/settings" style="@style/Chip" android:layout_marginEnd="0dp" android:text="@string/settings" />
         </LinearLayout>
 
@@ -128,7 +129,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:ellipsize="end"
-                            android:maxLines="2"
+                            android:maxLines="1"
                             android:textColor="@color/text"
                             android:textSize="22sp" />
 
@@ -148,23 +149,33 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
                             android:ellipsize="end"
-                            android:maxLines="4"
+                            android:maxLines="2"
                             android:textColor="@color/text2"
                             android:textSize="16sp" />
                     </LinearLayout>
 
-                    <!-- beside the text, not under it: keeps rows free for the guide/episode list -->
-                    <LinearLayout
-                        android:id="@+id/actions"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="10dp"
-                        android:orientation="vertical"
-                        android:visibility="gone">
+                </LinearLayout>
 
-                        <TextView android:id="@+id/fav" style="@style/Chip" android:layout_width="match_parent" android:layout_marginEnd="0dp" android:text="@string/fav_add" />
-                        <TextView android:id="@+id/play" style="@style/Primary" android:layout_width="match_parent" android:layout_marginTop="8dp" android:layout_marginEnd="0dp" android:text="@string/fullscreen" />
-                    </LinearLayout>
+                <!-- one row under the text: favourite, group, delete, then the primary action on the right -->
+                <LinearLayout
+                    android:id="@+id/actions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal"
+                    android:visibility="gone">
+
+                    <TextView android:id="@+id/fav" style="@style/Chip" android:minWidth="0dp" android:paddingStart="14dp" android:paddingEnd="14dp" android:text="@string/fav_add" />
+                    <TextView android:id="@+id/group" style="@style/Chip" android:minWidth="0dp" android:paddingStart="14dp" android:paddingEnd="14dp" android:text="@string/group" />
+                    <TextView android:id="@+id/remove" style="@style/Chip" android:minWidth="0dp" android:paddingStart="14dp" android:paddingEnd="14dp" android:text="@string/remove" />
+                    <TextView android:id="@+id/dl" style="@style/Chip" android:minWidth="0dp" android:paddingStart="14dp" android:paddingEnd="14dp" android:visibility="gone" />
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
+
+                    <TextView android:id="@+id/play" style="@style/Primary" android:minWidth="0dp" android:layout_marginEnd="0dp" android:paddingStart="14dp" android:paddingEnd="14dp" android:text="@string/fullscreen" />
                 </LinearLayout>
 
                 <androidx.recyclerview.widget.RecyclerView
@@ -228,6 +239,15 @@
                 android:layout_height="0dp"
                 android:layout_weight="1" />
 
+            <!-- quality choices, opened by the quality button; no popup window -->
+            <LinearLayout
+                android:id="@+id/oQualityRow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:orientation="horizontal"
+                android:visibility="gone" />
+
             <LinearLayout
                 android:id="@+id/seekRow"
                 android:layout_width="match_parent"
@@ -263,13 +283,9 @@
                 <TextView android:id="@+id/oPause" style="@style/Osd" android:text="@string/pause" />
                 <TextView android:id="@+id/oFwd" style="@style/Osd" android:text="@string/fwd_30" />
                 <TextView android:id="@+id/oSpeed" style="@style/Osd" android:contentDescription="@string/speed" />
+                <TextView android:id="@+id/oQuality" style="@style/Osd" android:text="@string/quality" />
                 <TextView android:id="@+id/oNext" style="@style/Osd" android:text="@string/next" />
-
-                <View
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
-
+                <!-- right after the channel buttons, not alone in the far corner -->
                 <TextView android:id="@+id/oExit" style="@style/Osd" android:layout_marginEnd="0dp" android:text="@string/exit_full" />
             </LinearLayout>
         </LinearLayout>

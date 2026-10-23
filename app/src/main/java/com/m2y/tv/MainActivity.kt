@@ -1,6 +1,7 @@
 package com.m2y.tv
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.pm.ApplicationInfo
 import android.database.SQLException
 import android.net.ConnectivityManager
@@ -20,11 +21,13 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.m2y.tv.data.Cat
 import com.m2y.tv.data.Creds
 import com.m2y.tv.data.Episode
+import com.m2y.tv.data.Guide
 import com.m2y.tv.data.Importer
 import com.m2y.tv.data.Item
 import com.m2y.tv.data.Kind
@@ -33,9 +36,13 @@ import com.m2y.tv.data.Secrets
 import com.m2y.tv.data.Source
 import com.m2y.tv.data.UrlMask
 import com.m2y.tv.data.Xtream
+import com.m2y.tv.data.liveFormats
+import com.m2y.tv.data.m3uCandidates
 import com.m2y.tv.play.Media
 import com.m2y.tv.play.Playback
+import com.m2y.tv.ui.Downloads
 import com.m2y.tv.ui.ItemAdapter
+import com.m2y.tv.ui.Library
 import com.m2y.tv.ui.Row
 import com.m2y.tv.ui.SettingsPanel
 import com.m2y.tv.ui.TextAdapter
@@ -57,7 +64,7 @@ import kotlin.coroutines.cancellation.CancellationException
  * Single screen: tabs + search on top, categories | list | preview & details below. The player, the full-screen
  * view and the settings panel live in the same window, so nothing is rebuilt when switching between them.
  */
-class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, SettingsPanel.Callbacks {
+class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, SettingsPanel.Callbacks, Library.Host {
     private val debuggable by lazy { applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0 }
     private val ui = CoroutineScope(
         SupervisorJob() + Dispatchers.Main.immediate + CoroutineExceptionHandler { _, e ->
@@ -71,6 +78,8 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
     private lateinit var playback: Playback
     private lateinit var video: VideoBox
     private lateinit var settings: SettingsPanel
+    private lateinit var library: Library
+    private lateinit var downloads: Downloads
     private lateinit var cats: TextAdapter
     private lateinit var items: ItemAdapter
     private lateinit var sideRows: TextAdapter
@@ -85,13 +94,17 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
     private lateinit var poster: ImageView
     private lateinit var actions: View
     private lateinit var favBtn: TextView
+    private lateinit var groupBtn: TextView
+    private lateinit var removeBtn: View
     private lateinit var playBtn: TextView
 
     private var sources: List<Source> = emptyList()
-    private var source: Source? = null
+    override var source: Source? = null
     private var xtream: Xtream? = null
+    private var servers: List<String> = emptyList() // Xtream servers, the one that answered last first
+    private var solo = true // the account allows one stream at a time (M3U and silent panels count as one)
     private var mask: UrlMask? = null
-    private var tab = Kind.LIVE
+    override var tab = Kind.LIVE
     private var catKey: String = Cat.ALL
     private var favs: Set<String> = emptySet()
     private var selected: Item? = null
@@ -104,8 +117,9 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
     private var sideJob: Job? = null
     private var importJob: Job? = null
     private var zapTo = -1
-    private val epgCache = object : LinkedHashMap<String, Pair<Long, List<Programme>>>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Long, List<Programme>>>) = size > EPG_CACHE
+    private val guide = Guide(ui) { src, ok ->
+        if (!ok) status.text = "Program rehberi alınamadı"
+        selected?.takeIf { it.kind == Kind.LIVE && source?.id == src.id }?.let(::showSide)
     }
     private val network = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(n: Network) {
@@ -121,10 +135,12 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
         }
         setContentView(R.layout.activity_main)
         bindViews()
-        playback = Playback(this, Graph.http, this)
+        playback = Playback(this, Graph.http, this) { Graph.offline.vod(it) }
         video = VideoBox(this, { playback }, this)
         playback.attach(video.surface)
         settings = SettingsPanel(this, ui, this)
+        library = Library(this, ui, this)
+        downloads = Downloads(this, ui, this, ::syncDownloads)
         ui.launch { boot() }
     }
 
@@ -138,24 +154,26 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
         poster = findViewById(R.id.poster)
         actions = findViewById(R.id.actions)
         favBtn = findViewById(R.id.fav)
+        groupBtn = findViewById(R.id.group)
+        removeBtn = findViewById(R.id.remove)
         playBtn = findViewById(R.id.play)
         tabs = mapOf(Kind.LIVE to findViewById(R.id.tabLive), Kind.MOVIE to findViewById(R.id.tabMovie), Kind.SERIES to findViewById(R.id.tabSeries))
         tabs.forEach { (k, v) -> v.setOnClickListener { if (k != tab || query.isNotEmpty()) showTab(k) } }
 
-        cats = TextAdapter { r -> onCategory(r.tag as String) }
+        cats = TextAdapter({ r -> onCategory(r.tag as String) }) { r -> library.railMenu(r.tag as String, r.text.toString()) }
         findViewById<RecyclerView>(R.id.cats).apply {
             layoutManager = LinearLayoutManager(context)
             adapter = cats
             itemAnimator = null
         }
-        items = ItemAdapter(ui, Graph.images, ::onItem, ::toggleFav, ::loadMore)
+        items = ItemAdapter(ui, Graph.images, ::onItem, ::toggleFav, ::loadMore) { library.light(it) }
         itemsView = findViewById<RecyclerView>(R.id.items).apply {
             layoutManager = LinearLayoutManager(context)
             adapter = items
             itemAnimator = null
             setHasFixedSize(true)
         }
-        sideRows = TextAdapter { r -> (r.tag as? Episode)?.let(::playEpisode) }
+        sideRows = TextAdapter({ r -> (r.tag as? Episode)?.let(::playEpisode) }) { r -> (r.tag as? Episode)?.let { selected?.let { s -> downloads.episodeMenu(s, it) } } }
         findViewById<RecyclerView>(R.id.sideList).apply {
             layoutManager = LinearLayoutManager(context)
             adapter = sideRows
@@ -163,6 +181,9 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
         }
         findViewById<View>(R.id.settings).setOnClickListener { openSettings() }
         favBtn.setOnClickListener { selected?.let(::toggleFav) }
+        groupBtn.setOnClickListener { selected?.let { library.groupAction(it, if (query.isEmpty()) catKey else Cat.ALL) } }
+        removeBtn.setOnClickListener { selected?.let(library::deleteItem) }
+        findViewById<View>(R.id.about).setOnClickListener { showAbout() }
         playBtn.setOnClickListener { selected?.let { play(it, full = true) } }
         search.addTextChangedListener(
             object : TextWatcher {
@@ -186,6 +207,7 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
     }
 
     override fun onStop() {
+        library.stop() // no probes while nobody looks
         playback.release() // frees the hardware decoder and buffers while another app is in front
         runCatching { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(network) }
         super.onStop()
@@ -204,7 +226,7 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
     override fun onBackPressed() {
         when {
             video.fullscreen -> video.setFullscreen(false)
-            settings.isOpen && source != null -> onClose()
+            settings.isOpen -> onClose()
             query.isNotEmpty() -> search.setText("")
             else -> moveTaskToBack(true) // keep state for a fast return
         }
@@ -214,6 +236,7 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
 
     private suspend fun boot() {
         val saved = io { Triple(db.sources(), db.get(K_SOURCE)?.toLongOrNull(), db.get(K_TAB)?.toIntOrNull()) }
+        playback.setMaxHeight(io { db.get(K_MAX_QUALITY) }?.toIntOrNull() ?: 0)
         sources = saved.first
         tab = Kind.entries.getOrElse(saved.third ?: 0) { Kind.LIVE }
         val src = sources.firstOrNull { it.id == saved.second } ?: sources.firstOrNull()
@@ -223,6 +246,8 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
             openSettings()
         } else {
             activate(src)
+            delay(AUTO_REFRESH_DELAY_MS) // unfinished downloads go on, once the first channel has started
+            downloads.resumePending()
         }
     }
 
@@ -240,8 +265,8 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
             status.text = "Kayıtlı bilgiler çözülemedi; Ayarlar'dan listeyi düzenleyin."
             return
         }
-        val fmt = io { db.get(Importer.liveExtKey(src.id)) }
-        xtream = (creds as? Creds.Xtream)?.let { Xtream(Graph.http, it).apply { liveExt = fmt ?: "ts" } }
+        account(src, creds)
+        library.load(src)
         mask = (creds as? Creds.M3u)?.let { UrlMask.forPlaylist(it.url) }
         io { db.put(K_SOURCE, src.id.toString()) }
         showTab(tab)
@@ -252,6 +277,15 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
                 refresh(src)
             }
         }
+    }
+
+    /** Xtream details the last import learnt: allowed live outputs, the server that answered, max_connections. */
+    private suspend fun account(src: Source, creds: Creds) {
+        val (fmt, srv, conns) = io { Triple(db.get(Importer.liveExtKey(src.id)), db.get(Importer.serverKey(src.id)), db.get(Importer.connsKey(src.id))) }
+        val x = creds as? Creds.Xtream
+        servers = x?.servers(srv).orEmpty()
+        xtream = x?.let { Xtream(Graph.http, it, servers.first()).apply { formats = liveFormats(fmt?.split(',').orEmpty()) } }
+        solo = (conns?.toIntOrNull() ?: 0) < 2
     }
 
     private fun refresh(src: Source) {
@@ -265,7 +299,7 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
                 val r = withContext(Dispatchers.IO) {
                     Graph.importer.run(src, Secrets.open(src.secret), { s -> status.post { status.text = s } }) { k -> ui.launch { onPublished(src.id, k) } }
                 }
-                if (src.id == source?.id) xtream?.liveExt = io { db.get(Importer.liveExtKey(src.id)) } ?: "ts"
+                if (src.id == source?.id) io { runCatching { Secrets.open(src.secret) }.getOrNull() }?.let { account(src, it) }
                 status.text = Importer.summary(r.counts) +
                     (if (r.failed.isEmpty()) "" else " · alınamadı: " + r.failed.joinToString { Importer.LABELS[it.ordinal] }) +
                     (if (r.epg < 0) " · rehber alınamadı" else "")
@@ -312,8 +346,11 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
         listJob?.cancel()
         listJob = ui.launch {
             val (list, keys, saved) = io { Triple(db.cats(src, k), db.favKeys(src.id, k), db.get(catKey(src.id, k))) }
+            val groups = io { db.groups(src.id, k) }
             favs = keys
-            val all = listOf(Cat(Cat.FAV, getString(R.string.favorites)), Cat(Cat.ALL, getString(R.string.all))) + list
+            val all = listOf(Cat(Cat.FAV, getString(R.string.favorites)), Cat(Cat.REC, getString(R.string.recent))) +
+                listOfNotNull(Cat(Cat.DL, getString(R.string.downloads)).takeIf { k != Kind.LIVE }) + Cat(Cat.ALL, getString(R.string.all)) +
+                groups.map { Cat(Cat.group(it.id), "▸ ${it.name}") } + list
             // an empty favourites list is a poor landing page
             catKey = all.firstOrNull { it.key == saved && !(it.key == Cat.FAV && keys.isEmpty()) }?.key ?: Cat.ALL
             cats.submit(TextAdapter.cats(all, catKey))
@@ -338,19 +375,25 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
         val src = source ?: return
         val k = tab
         val key = catKey
-        val list = io {
-            when (key) {
-                Cat.FAV -> db.favItems(src, k)
-                Cat.ALL -> db.items(src, k, null, -1, PAGE)
-                else -> db.items(src, k, key, -1, PAGE)
-            }
-        }
+        downloads.listShown = key == Cat.DL
+        val list = if (key == Cat.DL) downloads.items(k) else io { db.items(src, k, key, -1, PAGE) }
         if (k != tab || key != catKey) return
-        endReached = key == Cat.FAV || list.size < PAGE
+        endReached = list.size < PAGE || key == Cat.FAV || key == Cat.REC || key == Cat.DL || Cat.groupId(key) != null
         items.submit(k, list, favs)
         items.setCurrent((playing?.takeIf { it.kind == k } ?: selected)?.ext)
         itemsView.scrollToPosition(maxOf(0, items.indexOf(playing?.ext)))
-        showEmpty(list.isEmpty(), if (key == Cat.FAV) R.string.empty_fav else if (importJob?.isActive == true) R.string.loading else R.string.empty_list)
+        showEmpty(
+            list.isEmpty(),
+            when {
+                key == Cat.FAV -> R.string.empty_fav
+                key == Cat.REC -> R.string.empty_recent
+                key == Cat.DL -> R.string.empty_dl
+                Cat.groupId(key) != null -> R.string.empty_group
+                importJob?.isActive == true -> R.string.loading
+                else -> R.string.empty_list
+            },
+        )
+        if (k == Kind.LIVE && key != Cat.ALL) library.check(key, list) // whole-catalogue checks only on request
     }
 
     private fun loadMore() {
@@ -360,7 +403,7 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
         val k = tab
         val key = catKey
         pageJob = ui.launch {
-            val more = io { db.items(src, k, key.takeIf { it != Cat.ALL }, after, PAGE) }
+            val more = io { db.items(src, k, key, after, PAGE) }
             if (k != tab || key != catKey) return@launch
             endReached = more.size < PAGE
             items.append(more)
@@ -403,11 +446,17 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
         if (isEmpty) empty.setText(text)
     }
 
+    /**
+     * The last channel comes back selected, with its guide, but does not start (as on the LG app): nothing holds the
+     * account's only connection, so the background check can light the packages the user browses.
+     */
     private suspend fun restoreLast(src: Source) {
-        if (playing != null) return
+        if (playing != null || selected != null) return
         val ext = io { db.get(lastKey(src.id)) } ?: return
         val item = items.items.firstOrNull { it.ext == ext } ?: io { db.find(src, Kind.LIVE, ext) } ?: return
-        onItem(item)
+        items.setCurrent(item.ext)
+        itemsView.scrollToPosition(maxOf(0, items.indexOf(item.ext)))
+        showSide(item)
     }
 
     // ---- selection, details, playback
@@ -423,15 +472,20 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
     }
 
     private fun play(item: Item, full: Boolean) {
+        if (inDownloads()) { // a downloaded film or episode: its own address, read from the download first
+            startMedia(Media(listOfNotNull(item.opts), live = false), item.name, full = true)
+            playing = item
+            return
+        }
         if (item.kind == Kind.SERIES && xtream != null) return // Xtream series play per episode
         if (item.kind == Kind.LIVE && playing?.ext == item.ext && playback.media != null) {
             video.setFullscreen(full || video.fullscreen)
             return
         }
-        val url = xtream?.streamUrl(item.kind, item.ext, item.cext) ?: mask?.unmask(item.ext) ?: item.ext
         val opts = item.opts?.split('\n')
-        startMedia(Media(url, item.kind == Kind.LIVE, opts?.getOrNull(0), opts?.getOrNull(1)), item.name, full)
+        startMedia(Media(urlsOf(item), item.kind == Kind.LIVE, opts?.getOrNull(0), opts?.getOrNull(1)), item.name, full)
         playing = item
+        library.watched(item)
         if (item.kind == Kind.LIVE) {
             showSide(item)
             val src = source ?: return
@@ -441,9 +495,10 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
 
     private fun playEpisode(ep: Episode) {
         val series = selected ?: return
-        val url = xtream?.streamUrl(Kind.SERIES, ep.id, ep.cext) ?: return
-        startMedia(Media(url, live = false), "${series.name} · ${ep.season}. sezon ${ep.num}. bölüm", full = true)
+        val urls = xtream?.streamUrls(Kind.SERIES, ep.id, ep.cext, servers) ?: return
+        startMedia(Media(urls, live = false), "${series.name} · ${ep.season}. sezon ${ep.num}. bölüm", full = true)
         playing = series
+        library.watched(series)
     }
 
     private fun startMedia(m: Media, name: String, full: Boolean) {
@@ -464,7 +519,11 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
         poster.visibility = if (item == null || item.kind == Kind.LIVE) View.GONE else View.VISIBLE
         if (item == null) return
         favBtn.setText(if (item.ext in favs) R.string.fav_remove else R.string.fav_add)
-        playBtn.visibility = if (item.kind == Kind.SERIES && xtream != null) View.GONE else View.VISIBLE
+        groupBtn.setText(if (query.isEmpty() && Cat.groupId(catKey) != null) R.string.ungroup else R.string.group)
+        val dl = inDownloads()
+        for (v in listOf(favBtn, groupBtn, removeBtn)) v.visibility = if (dl) View.GONE else View.VISIBLE
+        playBtn.visibility = if (item.kind == Kind.SERIES && xtream != null && !dl) View.GONE else View.VISIBLE
+        downloads.bind(item, dl || item.kind == Kind.MOVIE || (item.kind == Kind.SERIES && xtream == null), dl)
         playBtn.setText(if (item.kind == Kind.LIVE) R.string.fullscreen else R.string.play)
         if (item.kind != Kind.LIVE) {
             val d = resources.displayMetrics.density
@@ -472,9 +531,10 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
         }
         val src = source ?: return
         val x = xtream
+        if (dl) return // nothing more to fetch: it may be watched offline
         sideJob = ui.launch {
             when {
-                item.kind == Kind.LIVE -> showGuide(guide(src, x, item))
+                item.kind == Kind.LIVE -> showGuide(guide.of(src, x, item, GUIDE_ROWS))
                 x == null -> Unit
                 item.kind == Kind.MOVIE -> io { runCatching { x.vodInfo(item.ext) }.getOrNull() }?.let { v ->
                     sub.text = listOfNotNull(v.year, v.genre, v.duration, item.rating?.let { "★ $it" }).filter { it.isNotBlank() }.joinToString(" · ")
@@ -490,14 +550,7 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
         }
     }
 
-    private suspend fun guide(src: Source, x: Xtream?, item: Item): List<Programme> {
-        val now = System.currentTimeMillis() / 1000
-        if (x == null) return item.epg?.let { ch -> io { db.epg(src.id, ch, now, GUIDE_ROWS) } }.orEmpty()
-        epgCache[item.ext]?.takeIf { now - it.first < EPG_TTL_S }?.let { return it.second }
-        val list = io { runCatching { x.shortEpg(item.ext, GUIDE_ROWS) }.getOrNull() } ?: return emptyList()
-        epgCache[item.ext] = now to list
-        return list
-    }
+    private fun inDownloads() = catKey == Cat.DL && query.isEmpty()
 
     private fun showGuide(all: List<Programme>) {
         val now = System.currentTimeMillis() / 1000
@@ -566,7 +619,25 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
         }
     }
 
-    override fun onStatus(status: Playback.Status, detail: String?) = video.onStatus(status, detail)
+    override fun onStatus(status: Playback.Status, detail: String?) {
+        video.onStatus(status, detail)
+        val live = playing?.takeIf { it.kind == Kind.LIVE && playback.media?.live == true }
+        // the light follows real playback: a picture makes it green, a final failure red
+        if (live != null && status == Playback.Status.PLAYING) library.record(live.ext, true)
+        if (live != null && status == Playback.Status.FAILED) {
+            library.record(live.ext, false)
+            video.setFullscreen(false) // the reconnect failed too: back to the channel list
+        }
+        // a one-connection account drops the picture on any probe: the background check waits while a stream is on
+        library.hold(status == Playback.Status.CONNECTING || (solo && status in ON_AIR))
+        syncDownloads()
+    }
+
+    /** One connection: a download waits while anything plays (or starts). */
+    private fun syncDownloads() {
+        val s = playback.status
+        Graph.offlineIfOpen?.hold(solo && (s == Playback.Status.CONNECTING || s in ON_AIR))
+    }
 
     override fun onVideoSize(width: Int, height: Int, pixelRatio: Float) = video.onVideoSize(width, height, pixelRatio)
 
@@ -574,15 +645,77 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
         if (debuggable) Log.i(TAG, "first-frame $ms ms")
     }
 
+    override fun onQualities(choices: List<Int>) = video.onQualities(choices)
+
+    /** One cap for every stream: picked in the player or in Settings, remembered for new channels. */
+    override fun onQuality(maxHeight: Int) {
+        playback.setMaxHeight(maxHeight)
+        ui.launch { io { db.put(K_MAX_QUALITY, maxHeight.toString()) } }
+        if (settings.isOpen) settings.showQuality(maxHeight)
+    }
+
+    override fun onMaxQuality(maxHeight: Int) = onQuality(maxHeight)
+
+    // ---- Library host
+
+    override fun urlsOf(item: Item): List<String> {
+        xtream?.let { return it.streamUrls(item.kind, item.ext, item.cext, servers) }
+        val url = mask?.unmask(item.ext) ?: item.ext
+        return if (item.kind == Kind.LIVE) m3uCandidates(url) else listOf(url)
+    }
+
+    override fun playingExt() = playing?.takeIf { playback.media != null }?.ext
+
+    override fun reloadRail() = showTab(tab)
+
+    override fun reloadList() {
+        ui.launch { loadItems() }
+    }
+
+    override fun onLight(ext: String) = items.changed(ext)
+
+    override fun progress(text: String?) {
+        if (text != null) status.text = text else if (status.text.startsWith(CHECK_PREFIX)) status.text = ""
+    }
+
+    override fun pauseForScan(): Item? {
+        val was = playing?.takeIf { it.kind == Kind.LIVE && playback.media != null }
+        playback.clear()
+        video.hide()
+        playing = null
+        return was
+    }
+
+    override fun resumeAfterScan(item: Item?) {
+        if (item != null && tab == Kind.LIVE && playing == null) play(item, full = false)
+    }
+
+    private fun showAbout() {
+        val version = packageManager.getPackageInfo(packageName, 0).versionName
+        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle(R.string.about_title)
+            .setMessage(getString(R.string.about_text, version))
+            .setPositiveButton(R.string.close, null)
+            .show()
+    }
+
     // ---- SettingsPanel callbacks
+
+    override fun onRestore(src: Source) {
+        ui.launch {
+            val n = io { db.unhideAll(src.id) }
+            Toast.makeText(this@MainActivity, if (n > 0) "$n silinen öğe geri getirildi" else "Silinen öğe yok", Toast.LENGTH_SHORT).show()
+            if (src.id == source?.id) showTab(tab)
+        }
+    }
 
     private fun openSettings() {
         hideKeyboard(search)
         settings.open(sources, source?.id)
+        settings.showQuality(playback.maxHeight)
     }
 
     override fun onClose() {
-        if (source == null) return // nothing to show behind it yet
         hideKeyboard(search)
         settings.close()
     }
@@ -624,6 +757,7 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
                 source = null
             }
             io { db.deleteSource(src.id) }
+            Graph.offline.let { off -> io { off.removeSource(src.id) } }
             reloadSources()
             val next = source ?: sources.firstOrNull()
             if (next == null) {
@@ -650,15 +784,16 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
         const val TAG = "M2YTV"
         const val K_SOURCE = "src"
         const val K_TAB = "tab"
+        const val K_MAX_QUALITY = "max_q"
         const val PAGE = 500
         const val SEARCH_LIMIT = 300
         const val SEARCH_DEBOUNCE_MS = 300L
         const val ZAP_DELAY_MS = 350L
         const val GUIDE_ROWS = 24
-        const val EPG_TTL_S = 600L
-        const val EPG_CACHE = 64
         const val STALE_MS = 24 * 3600_000L
         const val AUTO_REFRESH_DELAY_MS = 8_000L
+        const val CHECK_PREFIX = "Kanallar denetleniyor"
+        val ON_AIR = setOf(Playback.Status.PLAYING, Playback.Status.BUFFERING, Playback.Status.PAUSED)
 
         fun catKey(src: Long, k: Kind) = "cat_${src}_${k.ordinal}"
         fun lastKey(src: Long) = "last_$src"

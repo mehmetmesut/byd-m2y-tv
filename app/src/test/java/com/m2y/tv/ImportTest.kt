@@ -1,6 +1,7 @@
 package com.m2y.tv
 
 import org.robolectric.RuntimeEnvironment
+import com.m2y.tv.data.Cat
 import com.m2y.tv.data.Creds
 import com.m2y.tv.data.Db
 import com.m2y.tv.data.Importer
@@ -62,7 +63,7 @@ class ImportTest {
         val src = source(id)
         assertEquals("http://h/epg.xml", src.epgUrl)
         assertEquals(listOf("Ulusal", "Spor"), db.cats(src, Kind.LIVE).map { it.name })
-        val live = db.items(src, Kind.LIVE, null, -1, 100)
+        val live = db.items(src, Kind.LIVE, Cat.ALL, -1, 100)
         assertEquals(listOf("TRT 1", "Show TV", "Şampiyonlar Ligi Özet"), live.map { it.name })
         assertTrue(live.none { "ali" in it.ext || "s3cr" in it.ext }) // no credentials in the catalogue
         assertEquals(1, db.items(src, Kind.LIVE, "Spor", -1, 100).size)
@@ -77,7 +78,7 @@ class ImportTest {
         val first = Importer(db, fakeHttp(mapOf("get.php" to playlist)))
         first.run(source(id), Creds.M3u("http://h/get.php?username=ali&password=s3cr"), {}) {}
         val src1 = source(id)
-        val trt = db.items(src1, Kind.LIVE, null, -1, 10).first()
+        val trt = db.items(src1, Kind.LIVE, Cat.ALL, -1, 10).first()
         db.setFav(id, Kind.LIVE, trt.ext, true)
 
         // second refresh: one channel dropped, one added
@@ -89,16 +90,16 @@ class ImportTest {
         Importer(db, fakeHttp(mapOf("get.php" to next))).run(src1, Creds.M3u("http://h/get.php?username=ali&password=s3cr"), {}) {}
         val src2 = source(id)
         assertTrue(src2.gen(Kind.LIVE) > src1.gen(Kind.LIVE))
-        assertEquals(listOf("TRT 1", "Kanal D", "Şampiyonlar Ligi Özet"), db.items(src2, Kind.LIVE, null, -1, 10).map { it.name })
-        assertTrue(db.items(src1, Kind.LIVE, null, -1, 10).isEmpty()) // old generation and the junk are gone
-        assertEquals(listOf("TRT 1"), db.favItems(src2, Kind.LIVE).map { it.name })
+        assertEquals(listOf("TRT 1", "Kanal D", "Şampiyonlar Ligi Özet"), db.items(src2, Kind.LIVE, Cat.ALL, -1, 10).map { it.name })
+        assertTrue(db.items(src1, Kind.LIVE, Cat.ALL, -1, 10).isEmpty()) // old generation and the junk are gone
+        assertEquals(listOf("TRT 1"), db.items(src2, Kind.LIVE, Cat.FAV, -1, 10).map { it.name })
 
         // provider answers 200 with an HTML page: refresh fails, catalogue stays
         try {
             Importer(db, fakeHttp(mapOf("get.php" to "<html>bakım</html>"))).run(src2, Creds.M3u("http://h/get.php"), {}) {}
             throw AssertionError("expected IOException")
         } catch (e: java.io.IOException) {
-            assertEquals(3, db.items(source(id), Kind.LIVE, null, -1, 10).size)
+            assertEquals(3, db.items(source(id), Kind.LIVE, Cat.ALL, -1, 10).size)
         }
 
         db.deleteSource(id)

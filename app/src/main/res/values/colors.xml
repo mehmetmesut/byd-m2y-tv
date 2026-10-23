@@ -11,4 +11,5 @@
     <color name="accent_dim">#173A63</color>
     <color name="danger">#FF453A</color>
     <color name="fav">#FFD60A</color>
+    <color name="ok">#30D158</color>
 </resources>

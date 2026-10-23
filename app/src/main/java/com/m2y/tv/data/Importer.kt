@@ -35,9 +35,10 @@ class Importer(private val db: Db, private val http: OkHttpClient) {
                 for (k in Kind.entries) db.publish(src.id, k, gen).also { published(k) }
             }
             is Creds.Xtream -> {
-                val x = Xtream(http, creds)
-                if (!x.account().ok) throw IOException("Hesap doğrulanamadı")
-                db.put(liveExtKey(src.id), x.liveExt)
+                val (x, acc) = login(creds, db.get(serverKey(src.id)))
+                db.put(serverKey(src.id), x.server)
+                db.put(liveExtKey(src.id), x.formats.joinToString(","))
+                db.put(connsKey(src.id), acc.conns.toString())
                 for (k in Kind.entries) {
                     try {
                         counts[k.ordinal] = importXtream(job, x, src.id, gen, k, progress)
@@ -62,6 +63,29 @@ class Importer(private val db: Db, private val http: OkHttpClient) {
         }
         return Result(counts, failed, programmes)
     }
+
+    /**
+     * Signs in on the first server that answers, the one that worked last time first, then the "Alternatif sunucu".
+     * A refused login is final (the other server shares the account); an unreachable server moves on.
+     */
+    private fun login(creds: Creds.Xtream, last: String?): Pair<Xtream, Account> {
+        var error: IOException? = null
+        for (s in creds.servers(last)) {
+            val x = Xtream(http, creds, s)
+            val acc = try {
+                x.account()
+            } catch (e: IOException) {
+                error = e
+                continue
+            }
+            if (!acc.ok) throw IOException("Hesap doğrulanamadı")
+            return x to acc
+        }
+        throw error ?: IOException("Sunucu yok")
+    }
+
+    /** Replaces the guide of [src] with the XMLTV file at [url] (Xtream panels that refuse `get_short_epg`). */
+    suspend fun guide(src: Source, url: String): Int = importEpg(coroutineContext.job, src, url)
 
     private fun importM3u(job: Job, src: Long, gen: Long, url: String, counts: IntArray, progress: (String) -> Unit): String? {
         val parser = M3uParser()
@@ -153,8 +177,14 @@ class Importer(private val db: Db, private val http: OkHttpClient) {
         val LABELS = arrayOf("Canlı", "Film", "Dizi")
         private val TR = Locale.forLanguageTag("tr")
 
-        /** kv key of the live output an Xtream account allows ("ts" or "m3u8"). */
+        /** kv key of the live outputs an Xtream account allows, preferred first ("ts,m3u8"). */
         fun liveExtKey(src: Long) = "fmt_$src"
+
+        /** kv key of the Xtream server (main or alternative) that answered the last import. */
+        fun serverKey(src: Long) = "srv_$src"
+
+        /** kv key of the account's `max_connections` (0 = the panel did not say). */
+        fun connsKey(src: Long) = "conns_$src"
 
         fun fmt(n: Int): String = String.format(TR, "%,d", n)
 

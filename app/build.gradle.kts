@@ -18,8 +18,8 @@ android {
         // single target: BYD DiLink 3.0 head unit, Android 10
         minSdk = 29
         targetSdk = 29
-        versionCode = 125076800
-        versionName = "1.25.07.68.0"
+        versionCode = 125076801
+        versionName = "1.25.07.68.1"
     }
 
     signingConfigs {
@@ -77,6 +77,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.recyclerview:recyclerview:1.4.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("com.google.zxing:core:3.5.3") // QR of the phone pairing page; pure Java, shrunk by R8
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.16.1")

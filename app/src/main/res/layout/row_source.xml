@@ -31,6 +31,7 @@
             android:textSize="15sp" />
     </LinearLayout>
 
+    <TextView android:id="@+id/rRestore" style="@style/Chip" android:text="@string/restore" />
     <TextView android:id="@+id/rDelete" style="@style/Chip" android:text="@string/delete" />
     <TextView android:id="@+id/rEdit" style="@style/Chip" android:text="@string/edit" />
     <TextView android:id="@+id/rRefresh" style="@style/Chip" android:text="@string/refresh" />

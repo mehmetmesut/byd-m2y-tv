@@ -49,7 +49,7 @@ class ParsersTest {
         val acc = x.account()
         assertTrue(acc.ok)
         assertEquals(1893456000L, acc.expiry)
-        assertEquals("m3u8", x.liveExt) // account does not allow ts
+        assertEquals(listOf("m3u8"), x.formats) // account does not allow ts
         val cats = ArrayList<String>()
         x.categories(Kind.LIVE) { id, name -> cats += "$id=$name" }
         assertEquals(listOf("5=Ulusal"), cats)
@@ -61,8 +61,8 @@ class ParsersTest {
         assertEquals(2, got[1].num)
         assertEquals("102", got[1].name) // falls back to the id
         assertEquals(null, got[1].logo)
-        assertEquals("http://srv:8080/live/u/p/101.m3u8", x.streamUrl(Kind.LIVE, "101", null))
-        assertEquals("http://srv:8080/movie/u/p/9.mkv", x.streamUrl(Kind.MOVIE, "9", "mkv"))
+        assertEquals(listOf("http://srv:8080/live/u/p/101.m3u8", "http://alt/live/u/p/101.m3u8"), x.streamUrls(Kind.LIVE, "101", null, listOf("http://srv:8080/", "alt")))
+        assertEquals(listOf("http://srv:8080/movie/u/p/9.mkv"), x.streamUrls(Kind.MOVIE, "9", "mkv", listOf("http://srv:8080")))
     }
 
     @Test

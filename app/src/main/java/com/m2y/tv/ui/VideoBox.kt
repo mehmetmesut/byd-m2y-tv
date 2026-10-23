@@ -5,14 +5,17 @@ import android.app.Activity
 import android.os.Handler
 import android.os.Looper
 import android.view.GestureDetector
+import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.SurfaceView
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import com.m2y.tv.R
 import com.m2y.tv.play.Playback
+import com.m2y.tv.play.qualityLabel
 import com.m2y.tv.play.speedLabel
 import kotlin.math.abs
 
@@ -26,6 +29,9 @@ class VideoBox(private val act: Activity, private val playback: () -> Playback, 
         fun onPreviewTap()
         fun onExitFull()
         fun onStep(delta: Int)
+
+        /** User picked a maximum height in the player (0 = automatic). */
+        fun onQuality(maxHeight: Int)
     }
 
     private val root: FrameLayout = act.findViewById(R.id.root)
@@ -43,6 +49,9 @@ class VideoBox(private val act: Activity, private val playback: () -> Playback, 
     private val liveOnly = listOf<View>(act.findViewById(R.id.oPrev), act.findViewById(R.id.oNext))
     private val speedBtn: TextView = act.findViewById(R.id.oSpeed)
     private val vodOnly = listOf<View>(act.findViewById(R.id.oBack), act.findViewById(R.id.oFwd), speedBtn, seekRow)
+    private val qualityBtn: TextView = act.findViewById(R.id.oQuality)
+    private val qualityRow: LinearLayout = act.findViewById(R.id.oQualityRow)
+    private var choices: List<Int> = emptyList()
     private val handler = Handler(Looper.getMainLooper())
 
     var fullscreen = false
@@ -52,7 +61,10 @@ class VideoBox(private val act: Activity, private val playback: () -> Playback, 
     private var videoH = 9
     private var statusText: String? = null
 
-    private val hideOsd = Runnable { osd.visibility = View.GONE }
+    private val hideOsd = Runnable {
+        osd.visibility = View.GONE
+        qualityRow.visibility = View.GONE
+    }
     private val tick = object : Runnable {
         override fun run() {
             updateTime()
@@ -96,6 +108,10 @@ class VideoBox(private val act: Activity, private val playback: () -> Playback, 
             speedBtn.text = speedLabel(playback().cycleSpeed())
             showOsd()
         }
+        qualityBtn.setOnClickListener {
+            if (qualityRow.visibility == View.VISIBLE) qualityRow.visibility = View.GONE else openQualities()
+            showOsd()
+        }
         pause.setOnClickListener {
             playback().togglePause()
             showOsd()
@@ -120,6 +136,8 @@ class VideoBox(private val act: Activity, private val playback: () -> Playback, 
         live = isLive
         osdTitle.text = title
         speedBtn.text = speedLabel(playback().speed)
+        qualityRow.visibility = View.GONE
+        onQualities(emptyList()) // tracks of the new stream are not known yet
         liveOnly.forEach { it.visibility = if (live) View.VISIBLE else View.GONE }
         vodOnly.forEach { it.visibility = if (live) View.GONE else View.VISIBLE }
         slot.visibility = View.VISIBLE
@@ -152,6 +170,39 @@ class VideoBox(private val act: Activity, private val playback: () -> Playback, 
         videoW = (w * ratio).toInt()
         videoH = h
         fit()
+    }
+
+    /** Quality button: active only when the stream has two or more heights to choose from. */
+    fun onQualities(c: List<Int>) {
+        choices = c
+        val multi = c.size >= 2
+        qualityBtn.isEnabled = multi
+        qualityBtn.alpha = if (multi) 1f else DISABLED_ALPHA
+        qualityBtn.text = when {
+            multi -> act.getString(R.string.quality_value, qualityLabel(playback().maxHeight))
+            c.size == 1 -> act.getString(R.string.quality_single)
+            else -> act.getString(R.string.quality)
+        }
+        if (!multi) qualityRow.visibility = View.GONE
+    }
+
+    /** One-tap row of choices above the controls: automatic and the stream's own heights. */
+    private fun openQualities() {
+        qualityRow.removeAllViews()
+        val current = playback().maxHeight
+        for (h in listOf(0) + choices) {
+            val chip = LayoutInflater.from(act).inflate(R.layout.row_osd_chip, qualityRow, false) as TextView
+            chip.text = qualityLabel(h)
+            chip.isActivated = h == current
+            chip.setOnClickListener {
+                cb.onQuality(h)
+                qualityRow.visibility = View.GONE
+                onQualities(choices)
+                showOsd()
+            }
+            qualityRow.addView(chip)
+        }
+        qualityRow.visibility = View.VISIBLE
     }
 
     fun onStatus(s: Playback.Status, detail: String?) {
@@ -225,6 +276,7 @@ class VideoBox(private val act: Activity, private val playback: () -> Playback, 
 
     private companion object {
         const val OSD_MS = 4_000L
+        const val DISABLED_ALPHA = 0.5f
 
         fun clock(pos: Long, dur: Long) = "${hms(pos)} / ${hms(dur)}"
 

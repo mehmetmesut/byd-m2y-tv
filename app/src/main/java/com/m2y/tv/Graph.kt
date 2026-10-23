@@ -3,6 +3,7 @@ package com.m2y.tv
 import android.content.Context
 import com.m2y.tv.data.Db
 import com.m2y.tv.data.Importer
+import com.m2y.tv.play.Offline
 import com.m2y.tv.ui.Images
 import okhttp3.Cache
 import okhttp3.OkHttpClient
@@ -37,4 +38,12 @@ object Graph {
     val images by lazy { Images { http.newBuilder().cache(Cache(File(app.cacheDir, "img"), 40L shl 20)).build() } }
 
     val importer by lazy { Importer(db, http) }
+
+    private var offlineOpen: Offline? = null
+
+    /** Downloads and the watch cache; opened by the first film or download, never at start for live TV only. */
+    val offline: Offline get() = offlineOpen ?: Offline(app, http).also { offlineOpen = it }
+
+    /** Null until something opened [offline]: live TV alone never creates it. */
+    val offlineIfOpen: Offline? get() = offlineOpen
 }

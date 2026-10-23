@@ -71,3 +71,38 @@ class UrlMask private constructor(private val user: String, private val pass: St
         }
     }
 }
+
+/**
+ * "Akıllı Bağlantı": a playlist address carrying `username` and `password` (Xtream panels' get.php) is the Xtream
+ * account itself (API catalogue, guide, VOD); null for any other address, which stays a plain M3U playlist.
+ */
+fun parseSmartLink(url: String): Creds.Xtream? {
+    val m = Regex("""^(https?://[^/?#\s]+)(?:/[^?#]*)?\?([^#]*)""", RegexOption.IGNORE_CASE).find(url.trim()) ?: return null
+    val q = HashMap<String, String>()
+    for (part in m.groupValues[2].split('&')) {
+        val i = part.indexOf('=')
+        if (i <= 0) continue
+        q[part.substring(0, i).lowercase()] = try {
+            java.net.URLDecoder.decode(part.substring(i + 1), "UTF-8")
+        } catch (e: IllegalArgumentException) {
+            return null // malformed escape: not a link this helper understands
+        }
+    }
+    val user = q["username"].orEmpty()
+    val pass = q["password"].orEmpty()
+    return if (user.isEmpty() || pass.isEmpty()) null else Creds.Xtream(m.groupValues[1], user, pass)
+}
+
+/**
+ * Addresses to try for an M3U stream, in order. ExoPlayer plays raw MPEG-TS natively, so the address itself comes
+ * first; an Xtream-style ".../live/u/p/123.ts" (or get.php's extensionless "host/u/p/123") gets its HLS twin as the
+ * fallback, which some panels still serve when the TS output is refused.
+ */
+fun m3uCandidates(url: String): List<String> {
+    Regex("""^(.*/live/[^/]+/[^/]+/[^/?]+)\.ts(\?.*)?$""", RegexOption.IGNORE_CASE).find(url)?.let {
+        return listOf(url, it.groupValues[1] + ".m3u8" + it.groupValues[2])
+    }
+    val x = Regex("""^(https?://[^/]+)/([^/?]+)/([^/?]+)/(\d+)(?:\.ts)?$""", RegexOption.IGNORE_CASE).find(url) ?: return listOf(url)
+    val (host, u, p, id) = x.destructured
+    return listOf(url, "$host/live/$u/$p/$id.m3u8")
+}
