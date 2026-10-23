@@ -1,7 +1,6 @@
 package com.m2y.tv
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.pm.ApplicationInfo
 import android.database.SQLException
 import android.net.ConnectivityManager
@@ -183,7 +182,7 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
         favBtn.setOnClickListener { selected?.let(::toggleFav) }
         groupBtn.setOnClickListener { selected?.let { library.groupAction(it, if (query.isEmpty()) catKey else Cat.ALL) } }
         removeBtn.setOnClickListener { selected?.let(library::deleteItem) }
-        findViewById<View>(R.id.about).setOnClickListener { showAbout() }
+        findViewById<View>(R.id.about).setOnClickListener { library.about() }
         playBtn.setOnClickListener { selected?.let { play(it, full = true) } }
         search.addTextChangedListener(
             object : TextWatcher {
@@ -348,8 +347,10 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
             val (list, keys, saved) = io { Triple(db.cats(src, k), db.favKeys(src.id, k), db.get(catKey(src.id, k))) }
             val groups = io { db.groups(src.id, k) }
             favs = keys
-            val all = listOf(Cat(Cat.FAV, getString(R.string.favorites)), Cat(Cat.REC, getString(R.string.recent))) +
-                listOfNotNull(Cat(Cat.DL, getString(R.string.downloads)).takeIf { k != Kind.LIVE }) + Cat(Cat.ALL, getString(R.string.all)) +
+            // under Favoriler in every playlist: Pasif Yayınlar (live) and Çevrimdışı (downloads, every tab)
+            val all = listOf(Cat(Cat.FAV, getString(R.string.favorites))) +
+                listOfNotNull(Cat(Cat.BAD, getString(R.string.bad)).takeIf { k == Kind.LIVE }) +
+                listOf(Cat(Cat.DL, getString(R.string.downloads)), Cat(Cat.REC, getString(R.string.recent)), Cat(Cat.ALL, getString(R.string.all))) +
                 groups.map { Cat(Cat.group(it.id), "▸ ${it.name}") } + list
             // an empty favourites list is a poor landing page
             catKey = all.firstOrNull { it.key == saved && !(it.key == Cat.FAV && keys.isEmpty()) }?.key ?: Cat.ALL
@@ -376,9 +377,9 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
         val k = tab
         val key = catKey
         downloads.listShown = key == Cat.DL
-        val list = if (key == Cat.DL) downloads.items(k) else io { db.items(src, k, key, -1, PAGE) }
+        val list = if (key == Cat.DL) downloads.items() else io { db.items(src, k, key, -1, PAGE) }
         if (k != tab || key != catKey) return
-        endReached = list.size < PAGE || key == Cat.FAV || key == Cat.REC || key == Cat.DL || Cat.groupId(key) != null
+        endReached = list.size < PAGE || Cat.whole(key)
         items.submit(k, list, favs)
         items.setCurrent((playing?.takeIf { it.kind == k } ?: selected)?.ext)
         itemsView.scrollToPosition(maxOf(0, items.indexOf(playing?.ext)))
@@ -388,12 +389,13 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
                 key == Cat.FAV -> R.string.empty_fav
                 key == Cat.REC -> R.string.empty_recent
                 key == Cat.DL -> R.string.empty_dl
+                key == Cat.BAD -> R.string.empty_bad
                 Cat.groupId(key) != null -> R.string.empty_group
                 importJob?.isActive == true -> R.string.loading
                 else -> R.string.empty_list
             },
         )
-        if (k == Kind.LIVE && key != Cat.ALL) library.check(key, list) // whole-catalogue checks only on request
+        if (k == Kind.LIVE && key != Cat.ALL && key != Cat.DL) library.check(key, list) // whole-catalogue checks only on request
     }
 
     private fun loadMore() {
@@ -628,8 +630,8 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
             library.record(live.ext, false)
             video.setFullscreen(false) // the reconnect failed too: back to the channel list
         }
-        // a one-connection account drops the picture on any probe: the background check waits while a stream is on
-        library.hold(status == Playback.Status.CONNECTING || (solo && status in ON_AIR))
+        // a one-connection account drops the picture on a stream probe: while one plays the check asks the panel only
+        library.hold(status == Playback.Status.CONNECTING, solo && status in ON_AIR)
         syncDownloads()
     }
 
@@ -688,15 +690,6 @@ class MainActivity : Activity(), Playback.Listener, VideoBox.Callbacks, Settings
 
     override fun resumeAfterScan(item: Item?) {
         if (item != null && tab == Kind.LIVE && playing == null) play(item, full = false)
-    }
-
-    private fun showAbout() {
-        val version = packageManager.getPackageInfo(packageName, 0).versionName
-        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
-            .setTitle(R.string.about_title)
-            .setMessage(getString(R.string.about_text, version))
-            .setPositiveButton(R.string.close, null)
-            .show()
     }
 
     // ---- SettingsPanel callbacks

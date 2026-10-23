@@ -69,6 +69,10 @@ class Cat(val key: String, val name: String) {
         const val FAV = "\u0001fav"
         const val REC = "\u0001rec"
         const val DL = "\u0001dl"
+        const val BAD = "\u0001bad"
+
+        /** Rail keys whose list comes whole from one query (no pages). */
+        fun whole(key: String) = key == FAV || key == REC || key == BAD || key == DL || groupId(key) != null
         private const val GROUP = "\u0001g"
 
         fun group(id: Long) = "$GROUP$id"

@@ -51,8 +51,10 @@
     <string name="group">+ Grup</string>
     <string name="ungroup">− Grup</string>
     <string name="remove">Sil</string>
-    <string name="downloads">İndirilenler</string>
-    <string name="empty_dl">İndirilen yok. Filmde "İndir", dizide bölüme basılı tutun.</string>
+    <string name="downloads">Çevrimdışı</string>
+    <string name="bad">Pasif Yayınlar</string>
+    <string name="empty_bad">Pasif yayın yok. Çalışmadığı anlaşılan kanallar burada toplanır; silince bütün paketlerden çıkar.</string>
+    <string name="empty_dl">Çevrimdışı izlenecek kayıt yok. Filmde "İndir"e basın, dizide bölüme basılı tutun.</string>
     <string name="empty_recent">Henüz izlenen yok</string>
     <string name="empty_group">Bu grup boş. Kanalı seçip "Gruba ekle" ile ekleyin.</string>
     <string name="select">Seç</string>

@@ -9,6 +9,7 @@ import android.view.View
 import android.widget.EditText
 import android.widget.Toast
 import com.m2y.tv.Graph
+import com.m2y.tv.R
 import com.m2y.tv.data.AutoCheck
 import com.m2y.tv.data.Cat
 import com.m2y.tv.data.Item
@@ -74,9 +75,10 @@ class Library(private val act: Activity, private val ui: CoroutineScope, private
         ui.launch { io { db.setHealth(src.id, ext, ok) } }
     }
 
-    /** While on, the background check starts no probe: a stream is starting, or plays on a one-connection account. */
-    fun hold(on: Boolean) {
-        auto.held = on
+    /** [starting]: no probe at all; [watching] (a stream plays on a one-connection account): the panel only. */
+    fun hold(starting: Boolean, watching: Boolean) {
+        auto.held = starting
+        auto.panelOnly = watching
     }
 
     /** Background check of the opened live list: channels without a light, the playing one never. */
@@ -152,6 +154,11 @@ class Library(private val act: Activity, private val ui: CoroutineScope, private
             key == Cat.FAV -> actions += "Favorileri temizle" to {
                 confirm("Favoriler temizlensin mi?", "Kanallar silinmez, yalnız bu liste boşalır.", "Evet, temizle") {
                     change { db.clearFavs(src.id, kind) }
+                }
+            }
+            key == Cat.BAD -> actions += "Tümünü listeden sil" to {
+                confirm("Pasif yayınların tümü listeden silinsin mi?", "Kanallar bütün paketlerden çıkar. $RESTORE_HINT", "Evet, sil") {
+                    change { db.hide(src.id, kind, db.items(src, kind, Cat.BAD, -1, 0).map { it.ext }, isCat = false) }
                 }
             }
             key == Cat.REC -> actions += "Son izlenenleri temizle" to {
@@ -260,7 +267,7 @@ class Library(private val act: Activity, private val ui: CoroutineScope, private
         while (true) {
             val page = db.items(src, Kind.LIVE, key, out.lastOrNull()?.ord ?: -1, PAGE)
             out += page
-            if (page.size < PAGE || key == Cat.FAV || key == Cat.REC || Cat.groupId(key) != null) return out
+            if (page.size < PAGE || Cat.whole(key)) return out
         }
     }
 
@@ -282,6 +289,12 @@ class Library(private val act: Activity, private val ui: CoroutineScope, private
         dialog().setTitle("Yeni grup adı").setView(field).setNegativeButton("Vazgeç", null)
             .setPositiveButton("Oluştur") { _, _ -> field.text.toString().trim().ifEmpty { initial }.let(done) }
             .show()
+    }
+
+    /** "i": who made it and what it does and does not do. */
+    fun about() {
+        val version = act.packageManager.getPackageInfo(act.packageName, 0).versionName
+        dialog().setTitle(R.string.about_title).setMessage(act.getString(R.string.about_text, version)).setPositiveButton(R.string.close, null).show()
     }
 
     private fun toast(text: String) = Toast.makeText(act, text, Toast.LENGTH_SHORT).show()

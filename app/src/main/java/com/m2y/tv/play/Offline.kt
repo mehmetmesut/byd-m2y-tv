@@ -92,10 +92,10 @@ class Offline(ctx: Context, http: OkHttpClient) {
 
     fun remove(id: String) = manager.removeDownload(id)
 
-    /** Every download of [kind], newest first; reads the download index (disk): call from an IO thread. */
-    fun list(kind: Kind): List<Entry> = manager.downloadIndex.getDownloads().use { c ->
+    /** Every download, newest first; reads the download index (disk): call from an IO thread. */
+    fun list(): List<Entry> = manager.downloadIndex.getDownloads().use { c ->
         buildList { while (c.moveToNext()) add(c.download) }
-    }.sortedByDescending { it.startTimeMs }.mapNotNull { d -> entry(d)?.takeIf { it.kind == kind } }
+    }.sortedByDescending { it.startTimeMs }.mapNotNull(::entry)
 
     /** One download or null; disk read, IO thread. */
     fun get(id: String): Entry? = manager.downloadIndex.getDownload(id)?.let(::entry)

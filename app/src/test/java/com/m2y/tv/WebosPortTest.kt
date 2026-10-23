@@ -123,6 +123,11 @@ class WebosPortTest {
         assertNull(Cat.groupId(Cat.FAV))
         db.setHealth(id, "1", false)
         assertEquals(false, db.health(id)["1"])
+        db.setHealth(id, "3", true)
+        assertEquals(listOf("K1"), names(Cat.BAD)) // only the failed ones gather in Pasif Yayınlar
+        db.hide(id, Kind.LIVE, listOf("1"), isCat = false)
+        assertTrue(names(Cat.BAD).isEmpty()) // deleted there = gone from every package
+        assertTrue(Cat.whole(Cat.BAD) && Cat.whole(Cat.DL) && !Cat.whole(Cat.ALL))
 
         db.deleteSource(id)
         assertTrue(db.groups(id, Kind.LIVE).isEmpty())

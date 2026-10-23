@@ -209,6 +209,7 @@ class Db(ctx: Context) : SQLiteOpenHelper(ctx, "tv.db", null, 2) {
             key == Cat.ALL -> Triple(" AND ord>?", "ord LIMIT ?", arrayOf("$afterOrd", "$limit"))
             key == Cat.FAV -> Triple(" AND EXISTS(SELECT 1 FROM fav f WHERE f.src=i.src AND f.kind=i.kind AND f.ext=i.ext)", "ord", emptyArray())
             key == Cat.REC -> Triple("", "(SELECT at FROM recent r WHERE r.src=i.src AND r.kind=i.kind AND r.ext=i.ext) DESC", emptyArray())
+            key == Cat.BAD -> Triple(" AND EXISTS(SELECT 1 FROM health h WHERE h.src=i.src AND h.ext=i.ext AND h.ok=0)", "ord", emptyArray())
             group != null -> Triple("", "(SELECT at FROM grp_item g WHERE g.grp=$group AND g.ext=i.ext)", emptyArray())
             else -> Triple(" AND cat=? AND ord>?", "ord LIMIT ?", arrayOf(key, "$afterOrd", "$limit"))
         }

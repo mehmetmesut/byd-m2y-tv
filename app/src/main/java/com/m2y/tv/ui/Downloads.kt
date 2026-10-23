@@ -125,14 +125,14 @@ class Downloads(
             .show()
     }
 
-    /** İndirilenler of [kind] as list items: `ext` = download id, `opts` = address, state in the name. */
-    suspend fun items(kind: Kind): List<Item> = offline().let { off -> io { off.list(kind) } }.mapIndexed { i, e ->
+    /** Every download (films and episodes) as list items: `ext` = download id, `opts` = address, state in the name. */
+    suspend fun items(): List<Item> = offline().let { off -> io { off.list() } }.mapIndexed { i, e ->
         val state = when {
             e.done -> ""
             e.percent >= 0 -> " · %${e.percent}"
             else -> " · sırada"
         }
-        Item(0, kind, null, e.id, e.title + state, e.logo, null, null, 0, i, null, e.url)
+        Item(0, e.kind, null, e.id, e.title + state, e.logo, null, null, 0, i, null, e.url)
     }
 
     private fun toast(text: String) = Toast.makeText(act, text, Toast.LENGTH_LONG).show()
